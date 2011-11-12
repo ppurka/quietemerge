@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091121                                       #
+        #   Version: 20091202                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,10 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/02/2009:   Enable support for environment variables,   #
+        #               which can temporarily override the settings #
+        #               in the config file.                         #
+        #               Update help text.                           #
         # 11/21/2009:   Bug fix: Really arcane bug! Packages with   #
         #               fetch restrictions error out so fast that   #
         #               the packages' status is not even displayed! #
@@ -254,7 +258,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091121
+    Version: 20091202
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -297,6 +301,13 @@ help() {
     $self -1 glibc vim
     $self --resume
     "
+    info "In order to temporarily override the settings present in the
+    config file, prepend the variable with an underscore _ and provide it
+    as an environment variable.
+    An example where I want to override the config file setting
+    temporarily, and/or provide a temporary setting:
+    _DELAY=2 _MOUNT_TMPFS=1 $self -a eselect
+    "
 }
 # }}}
 
@@ -324,9 +335,15 @@ fi
 TMPFILE=/tmp/${0##*/}.output.log
 tmpE=/tmp/${0##*/}.tmpE.$UID
 tmpT=/tmp/${0##*/}.tmpT
-: ${DELAY:=5}
-: ${MOUNT_TMPFS:=0}
-: ${SHOW_MERGE_TIME:=0}
+# Variables from config files or environment. environment gets preference
+: ${_DELAY:=${DELAY:-5}}
+: ${_MOUNT_TMPFS:=${MOUNT_TMPFS:-0}}
+: ${_TMPFS_SIZE:=$TMPFS_SIZE}
+: ${_TXT_UPDATER:=$TXT_UPDATER}
+: ${_GUI_UPDATER:=$GUI_UPDATER}
+: ${_SHOW_MERGE_TIME:=${SHOW_MERGE_TIME:-0}}
+unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER SHOW_MERGE_TIME
+# Other variables used in the script.
 _num=0                  # The number of the package being emerged.
 cmdline=""              # This will hold the arguments passed to emerge
 e_opt_ask=0             # If it is 1, then ask before emerging
@@ -341,12 +358,12 @@ pkg=""                  # This holds the name of current pkg being emerged
 
 # Mounting and unmounting tmpfs. These fns take no argument #{{{
 mount_tmpfs() {
-    [[ $MOUNT_TMPFS -ne 1 ]] && return 0
+    [[ $_MOUNT_TMPFS -ne 1 ]] && return 0
     local var_tmp="$(portageq envvar PORTAGE_TMPDIR)/portage"
     if mount | grep -q -s -w "tmpfs on $var_tmp"; then
         info "tmpfs is already mounted\n"
-    elif [[ "$TMPFS_SIZE" ]]; then
-        mount -t tmpfs -o size=${TMPFS_SIZE} tmpfs $var_tmp
+    elif [[ "$_TMPFS_SIZE" ]]; then
+        mount -t tmpfs -o size=${_TMPFS_SIZE} tmpfs $var_tmp
     else
         mount -t tmpfs tmpfs $var_tmp
     fi
@@ -354,7 +371,7 @@ mount_tmpfs() {
 }
 unmount_tmpfs() {
     # Do not mess with tmpfs mounted without this script
-    [[ $MOUNT_TMPFS -ne 1 ]] && return 0
+    [[ $_MOUNT_TMPFS -ne 1 ]] && return 0
     local var_tmp="$(portageq envvar PORTAGE_TMPDIR)/portage"
     if [[ $UID -eq 0 ]] && mount | grep -q -s -w "tmpfs on $var_tmp"; then
         umount $var_tmp
@@ -375,7 +392,7 @@ exit_prog() {
         Err -w "The emerge process given by PID: $PID is still running.
     The emerge process will be killed.\n"
         kill $PID
-        [[ $MOUNT_TMPFS -eq 1 ]] && sleep 2     # Allow emerge to finish
+        [[ $_MOUNT_TMPFS -eq 1 ]] && sleep 2     # Allow emerge to finish
     fi
     [[ "$@" -eq 0 ]] && unmount_tmpfs           # Unmount only if status=0
     echo    # This is here so that the exit below takes status of $@
@@ -386,7 +403,7 @@ exit_prog() {
 failed_pkgs() {
     # This expression is MASSIVE!!
     # This expression relies on the fact that emerge will not
-    # fail on still another package within $DELAY seconds. So,
+    # fail on still another package within $_DELAY seconds. So,
     # it searches for all --keep-going till the end of the file
     # sed -n -e "/Failed.*${pkg%%\/*}\/${pkg##*\/}/,\$s/.*emerge --keep-going: \([^ ]*\) dropped.*/  $pink* Skipped  \1$normal due to --keep-going/p" $TMPFILE
     for p in $( sed -n -e "/Failed.*${pkg%%\/*}\/${pkg##*\/}/,\$s/.*emerge --keep-going: \([^ ]*\) dropped.*/\1/p" $TMPFILE ); do
@@ -439,7 +456,7 @@ infolr() {
 
 # Usage: merge_time "cat/pkg-ver"
 merge_time() {
-    if [[ $SHOW_MERGE_TIME -eq 1 ]]; then
+    if [[ $_SHOW_MERGE_TIME -eq 1 ]]; then
         # Hopefully there won't be too many lines appended to log file
         # within 5 seconds. So, 40 should be a safe limit.
         tail -n 40 /var/log/emerge.log > $tmpT 2> /dev/null
@@ -608,7 +625,7 @@ _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
 mount_tmpfs
 
 # Secure temporary files TMPFILE and tmpT
-[[ $SHOW_MERGE_TIME -eq 1 ]] && secure_file $tmpT
+[[ $_SHOW_MERGE_TIME -eq 1 ]] && secure_file $tmpT
 secure_file $TMPFILE
 # Start the actual emerge
 emerge -q $cmdline >& $TMPFILE &
@@ -632,7 +649,7 @@ while ps -p $PID >& /dev/null; do
     # Some package is still being emerged.
     tmp="$( tac $TMPFILE | LC_ALL="C" grep -E -m1 '(Emerging|Installing)' )"
     # pkg_tmp contains the package currently being emerged. pkg contains
-    # the package which was being emerged $DELAY seconds earlier.
+    # the package which was being emerged $_DELAY seconds earlier.
     pkg_tmp="$( echo "$tmp" | sed -n -e 's/.*) \([^ ]*\)[ ]\?.*$/\1/p' )"
     if [[ "$pkg_tmp" != "$pkg" ]]; then
         if [[ -n "$pkg" ]]; then
@@ -687,7 +704,7 @@ while ps -p $PID >& /dev/null; do
     echo -ne "\x1b]0;$(($_total_num - $_num + 1))/$_total_num: \
 ${pkg#*\/}, Total ETA: ${eta}\007"
 
-    sleep $DELAY
+    sleep $_DELAY
 done
 
 # Either the emerge process is finished or there has been some
@@ -732,18 +749,18 @@ tail $TMPFILE | LC_ALL="C" grep -qi "preserved" && \
 info "Preserved libraries found: See $yellow$TMPFILE$normal"
 
 # Update config files.
-if [[ "$TXT_UPDATER" || "$GUI_UPDATER" ]] && \
+if [[ "$_TXT_UPDATER" || "$_GUI_UPDATER" ]] && \
     tail $TMPFILE | LC_ALL="C" grep -qEi -m1 "config.*updat"; then
     centered_output dash " Updating config files "
 
     # Handle some error cases
-    [[ "$TXT_UPDATER" && -z "$GUI_UPDATER" ]] && \
-        GUI_UPDATER="$TXT_UPDATER"
+    [[ "$_TXT_UPDATER" && -z "$_GUI_UPDATER" ]] && \
+        _GUI_UPDATER="$_TXT_UPDATER"
 
     if [[ -n "$DISPLAY" ]]; then
-            $GUI_UPDATER
-    elif [[ "$TXT_UPDATER" ]]; then
-            $TXT_UPDATER
+            $_GUI_UPDATER
+    elif [[ "$_TXT_UPDATER" ]]; then
+            $_TXT_UPDATER
     else
         Err "No config file updater was found. Check your settings in
     $yellow$config_dir/$config_file$normal\n"
