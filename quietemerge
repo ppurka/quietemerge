@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20110521                                       #
+        #   Version: 20110611                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,9 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 06/11/2011:   export FEATURES="notitles"-no need to update#
+        #               xterm title so frequently now.              #
+        #               Support for --autounmask-write.             #
         # 05/21/2011:   Use wc -[wl] with <$file to avoid extra o/p.#
         #               Secure TMPFILE should run after mount_tmpfs.#
         #               Output the total time emerge took.          #
@@ -328,7 +331,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20110521
+    Version: 20110611
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
@@ -434,7 +437,6 @@ unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER \
 declare -a -i exit_status=( 0 0 ) # Count # of failed and skipped packages
 declare -a -i merge_eta     # Keep in memory the est. ETA of current pkg(s)
 declare -a -i merge_start   # Keep in memory start time of current emerge(s)
-declare -i _num=0           # The number of the package being emerged
 declare -i count_lines=1    # Count the number of lines read from TMPFILE
 declare -i e_opt_ask=0      # If it is 1, then ask before emerging
 declare -i e_opt_pretend=0  # If it is 1, then only pretend the emerge
@@ -445,6 +447,7 @@ declare -i _total_num       # Holds the total # of pkgs going to be merged
 declare -i PID              # The pid of emerge process
 cmdline=""                  # This will hold the arguments passed to emerge
 E_LOG="/var/log/emerge.log" # The file where emerge dumps its logs
+e_opt_auto=""               # Variable for --autounmask-write
 e_opt_color="--color=y"     # This will be set to --color=n if so asked for
 e_opt_resume=""             # If it is '--resume', display "Resuming merge"
 e_opt_verbose=""            # If it is -v, then emerge -vq is launched
@@ -566,6 +569,13 @@ fix_edo() {
     for e in $edo; do
         case "$e" in
             -a|--ask) e_opt_ask=1;;
+            --autounmask-write*)
+                    if [[ "$2" = "y" || "$2" = "n" ]]; then
+                        e_opt_auto="--autounmask-write $2"
+                        shift
+                    else
+                        e_opt_auto="$1"
+                    fi ;;
             --color*)
                     if [[ "$e" = *=n ]]; then
                         e_opt_color="--color=n"
@@ -953,12 +963,12 @@ update_term_title() {
     [[ "$DISPLAY" ]] || return
     [[ -f $tmpE ]]   || return
 
-    _num=$(wc -l <$tmpE)
     # eta holds the total ETA
     eta="$( my_genlop_eta )"
     # Change the terminal title
     echo -ne "\x1b]0;$( echo $pkg_installing $pkg_merging | wc -w ) \
-jobs, $(($_total_num - $_num + 1))/$_total_num, Total ETA: ${eta}\007"
+jobs, $(($_total_num - $(wc -l <$tmpE) + 1))/$_total_num, \
+Total ETA: ${eta}\007"
 }
 
 # End. Fns specific to script }}}
@@ -980,6 +990,13 @@ fi
 until [[ -z "$1" ]]; do
     case "$1" in
         -a|--ask)       e_opt_ask=1;;
+        --autounmask-write*)
+                if [[ "$2" = "y" || "$2" = "n" ]]; then
+                    e_opt_auto="--autounmask-write $2"
+                    shift
+                else
+                    e_opt_auto="$1"
+                fi ;;
         --color*)
             if [[ "$1" = *=* ]]; then
                 if [[ "$1" = *=n ]]; then
@@ -1035,7 +1052,7 @@ sed -i -e 's/\[[^m]*m//g' $tmpE
 pkg_all="$( sed -e '/^\[ebuild/!d' $tmpE )"
 
 
-[[ $status -eq 0 ]] && {
+[[ $status -eq 0 || ( $status -eq 1 && "$e_opt_auto" ) ]] && {
     # Secure temporary file tmpT:
     secure_file $tmpT
     # Dump the emerge.log into tmpT
@@ -1080,7 +1097,16 @@ LC_ALL="C" grep -qE '^\[ebuild[^]]+F' $tmpE && \
     emerge process will fail if the packages are not downloaded manually.
     " && sleep 2
 # More error checks. Check if emerge exited with 0 return value.
-[[ $status -ne 0 ]] && exit_prog $status
+if [[ $status -eq 1 && "$e_opt_auto" ]]; then
+    if grep -qs "emerge: there are no ebuilds to satisfy" $tmpE; then
+        exit_prog $status
+    fi
+    info "It seems emerge exited with a non-zero status and you provided the
+    --autounmask-write flag either in command line or via EMERGE_DEFAULT_OPTS.
+    emerge might modify your config files in ${blue}/etc/portage$normal\n"
+elif [[ $status -ne 0 ]]; then
+    exit_prog $status
+fi
 unset status
 
 # --ask was provided in some form in command line.
@@ -1106,10 +1132,12 @@ mount_tmpfs
 # Pre-command just before the emerge starts running.
 [[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" 2> /dev/null )" ]] \
     && "$_PRE_CMD" || eval "$_PRE_CMD"
+# Export notitles FEATURE so that I can remove my own code
+export FEATURES="${FEATURES} notitles"
 # Secure temporary files TMPFILE
 secure_file $TMPFILE
 # Start the actual emerge
-emerge -q $e_opt_resume $cmdline >& $TMPFILE &
+emerge -q $e_opt_auto $e_opt_resume $cmdline >& $TMPFILE &
 PID=$!
 # Store the emerge start time
 merge_eta[0]=$( date -u '+%s' )
@@ -1152,12 +1180,6 @@ while ps -p $PID >& /dev/null; do
         update_installed    ${pkg_installing}
         update_installing   ${pkg_installing}
         update_merging      ${pkg_merging}
-        # Change the terminal title -- this is a constant fight with emerge!!
-        # Hope the terminal doesn't mind! ;-)
-        [[ "$DISPLAY" ]] && \
-        echo -ne "\x1b]0;$( echo $pkg_installing $pkg_merging | wc -w ) \
-jobs, $(($_total_num - $_num + 1))/$_total_num, Total ETA: ${eta}\007"
- 
     else
         # First output the installed packages. Each pkg is in a new line.
         tmp="$( echo "$newlines" | sed -n -e \
