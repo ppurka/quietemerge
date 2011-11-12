@@ -22,6 +22,12 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 01/16/2010:   Bug fix: revert check for mult. instances   #
+        #               while mounting tmpfs                        #
+        #               Bug fix: fix pgrep command and count of self#
+        #               Bug fix: Arrrgghhh! work around genlop bugs #
+        # 01/09/2010:   Initial support for multiple instances of   #
+        #               quietemerge                                 #
         # 12/21/2009:   Change output during next iteration if term #
         #               size changes.                               #
         # 12/19/2009:   Bug fix: Catching ACCESS VIOLATION should be#
@@ -259,7 +265,6 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 
 # Help me!! {{{
 help() {
-    local self="${0##*\/}"
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
@@ -317,6 +322,7 @@ help() {
 # }}}
 
 
+self="${0##*/}"
 config_dir=$HOME/.config
 config_file="${0##*\/}.config"
 # Display help in xterm if user clicked on the file
@@ -337,9 +343,10 @@ fi
 
 
 # Variables used in this script. Modify only if you know what you are doing
-TMPFILE=/tmp/${0##*/}.output.log
-tmpE=/tmp/${0##*/}.tmpE.$UID
-tmpT=/tmp/${0##*/}.tmpT
+# temp files
+TMPFILE=/tmp/$self.output.log
+tmpE=/tmp/$self.tmpE.$UID
+tmpT=/tmp/$self.tmpT
 # Variables from config files or environment. environment gets preference
 : ${_DELAY:=${DELAY:-5}}
 : ${_MOUNT_TMPFS:=${MOUNT_TMPFS:-0}}
@@ -357,6 +364,7 @@ e_opt_verbose=""        # If it is -v, then emerge -vq is launched
 eta=0                   # The total time left for the remaining packages
 exit_status=( 0 0 )     # This counts the # of failed and skipped packages
 my_len=19               # This is the length of "  * Emerging . ETA:"
+num_self=""             # This will hold the # of $self processes running
 PID=""                  # The pid of emerge process
 pkg=""                  # This holds the name of current pkg being emerged
 
@@ -378,7 +386,14 @@ unmount_tmpfs() {
     # Do not mess with tmpfs mounted without this script
     [[ $_MOUNT_TMPFS -ne 1 ]] && return 0
     local var_tmp="$(portageq envvar PORTAGE_TMPDIR)/portage"
-    if [[ $UID -eq 0 ]] && mount | grep -q -s -w "tmpfs on $var_tmp"; then
+
+    # Check if $var_tmp has any "leftover" files.
+    if [[ "$( ls $var_tmp/* 2>/dev/null )" ]]; then
+        Err -w "It appears that $blue$var_tmp$normal is unclean.
+    This may be because a different instance of $self has exited with
+    an error. 
+    tmpfs on $blue$var_tmp$normal will not be unmounted."
+    elif [[ $UID -eq 0 ]] && mount | grep -qsw "tmpfs on $var_tmp"; then
         umount $var_tmp
     fi
     [[ $? -ne 0 ]] && die "Error in unmounting tmpfs\n"
@@ -386,38 +401,8 @@ unmount_tmpfs() {
 # }}}
 
 # Functions specific to this script {{{
-# Check whether the last package failed, at the end of emerge process
-# Usage: last_pkg_failed <pkg>
-last_pkg_failed() {
-    local p_tmp p="$1" num=40
-
-    # Check for "$p fail" message
-    LC_ALL="C" grep -qi "error.*$p fail"        $TMPFILE && return 0
-    LC_ALL="C" grep -q  "Failed to emerge.*$p"  $TMPFILE && return 0
-
-    # Check for access violation message in the latest package
-    # Sed expression obtained from sed one-liners @ google search:
-    #   it prints the line immediately preceding ACCESS... message
-    sed -ne '/ACCESS VIOLATION SUMMARY/{g;1!p;};h' $TMPFILE | \
-        while read p_tmp; do
-            p_tmp="${p_tmp#*portage\/}"; p_tmp="${p_tmp%\/work\/*}"
-            [[ "$p_tmp" = "$p" ]] && return 0
-        done
-
-    # Check for fetch restriction fails
-    tail -n $num $TMPFILE | LC_ALL="C" grep -qiE "fetch failed.*$p" \
-        && return 0
-
-    # check for generic error
-    tail -n $num $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" \
-        && return 0
-
-    # $p has been merged successfully
-    return 1
-}
-
-
-    
+# All the functions are present in alphabetical order.
+ 
 # Usage: exit_prog [<exit status>]
 exit_prog() {
     [[ -f "$tmpE" ]] && rm -f $tmpE
@@ -431,7 +416,19 @@ exit_prog() {
         kill $PID
         [[ $_MOUNT_TMPFS -eq 1 ]] && sleep 2     # Allow emerge to finish
     fi
-    [[ "$@" -eq 0 ]] && unmount_tmpfs           # Unmount only if status=0
+    # Unmount only if status=0 and only one instance of $self is running
+    [[ "$@" -eq 0 ]] && {
+        # There is no easy way to get the num of running processes of $self
+        # ps, pgrep, etc all reports multiple processes instead of the
+        # actual number. I believe they count all the subprocesses too, if
+        # they are called inside a $( ) construct.
+        t=$(mktemp /tmp/$self-pgrep-XXXX)
+        pgrep -f "^[^ ]*($self|bash.*$self)" > $t 2>/dev/null
+        num_self="$(wc -l $t)"
+        rm -f $t
+        unset t
+        [[ "${num_self% *}" -eq 1 ]] && unmount_tmpfs
+    }
     echo    # This is here so that the exit below takes status of $@
     exit $@
 }
@@ -491,18 +488,75 @@ infolr() {
     $1 "$2${BLANK:1:$middle}$3"
 }
 
+# Check whether the last package failed, at the end of emerge process
+# Usage: last_pkg_failed <pkg>
+last_pkg_failed() {
+    local p_tmp p="$1" num=40
+
+    # Check for "$p fail" message
+    LC_ALL="C" grep -qi "error.*$p fail"        $TMPFILE && return 0
+    LC_ALL="C" grep -q  "Failed to emerge.*$p"  $TMPFILE && return 0
+
+    # Check for access violation message in the latest package
+    # Sed expression obtained from sed one-liners @ google search:
+    #   it prints the line immediately preceding ACCESS... message
+    sed -ne '/ACCESS VIOLATION SUMMARY/{g;1!p;};h' $TMPFILE | \
+        while read p_tmp; do
+            p_tmp="${p_tmp#*portage\/}"; p_tmp="${p_tmp%\/work\/*}"
+            [[ "$p_tmp" = "$p" ]] && return 0
+        done
+
+    # Check for fetch restriction fails
+    tail -n $num $TMPFILE | LC_ALL="C" grep -qiE "fetch failed.*$p" \
+        && return 0
+
+    # check for generic error
+    tail -n $num $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" \
+        && return 0
+
+    # $p has been merged successfully
+    return 1
+}
+
 # Usage: merge_time "cat/pkg-ver"
 merge_time() {
     if [[ $_SHOW_MERGE_TIME -eq 1 ]]; then
         # Hopefully there won't be too many lines appended to log file
         # within 5 seconds. So, 40 should be a safe limit.
-        tail -n 40 /var/log/emerge.log > $tmpT 2> /dev/null
+        tail -n $(($num_self*40)) /var/log/emerge.log > $tmpT 2> /dev/null
         genlop -f $tmpT -nt "$1" 2> /dev/null \
             | sed -n '/merge time:/s/.*: \(.*\)$/\1/p' | tail -n 1
     else
         echo "Done! "
     fi
 }
+
+# Use of this function is to make sure tmpfiles do not clash when multiple
+# quietemerge instances are running. It does not check if a quietemerge
+# instance is already running. So call this function *only* after
+# determining that another quietemerge instance is running.
+# Usage: new_tmp_file tmpfile
+new_tmp_file() {
+    # Give a warning if the number of tmp files exceed the number of
+    # running quietemerges. Err will output to std. err. so this is fine.
+    # Note that the ls command below should not fail since at least two
+    # $self process is running.
+    [[ "$( ls -1d ${1}* 2>/dev/null | wc -l )" -gt $num_self ]] && \
+        Err -w "There are more temporary files $yellow${1}*$normal
+    than the number of concurrently running $self processes.
+    You can do a 
+    ${underline}rm -f $1*$normal
+    after all the $self processes have exited ${bold}without error$normal."
+    local cnt=0
+    local t="$1.$cnt"
+    
+    while [[ -f "$t" ]]; do
+        ((cnt++))
+        t="$1.$cnt"
+    done
+    echo "$t"
+}
+
 
 # Usage: parse_cmdline "-some_command"
 parse_cmdline() {
@@ -602,6 +656,23 @@ done
 
 # Set the columns in the terminal
 set_cols
+# There is no easy way to get the number of running processes of $self
+# ps, pgrep, etc all reports multiple processes instead of the actual
+# number. I believe they count all the subprocesses too, if they are called
+# inside a $( ) construct.
+t=$(mktemp /tmp/$self-pgrep-XXXX)
+pgrep -f "^[^ ]*($self|bash.*$self)" > $t 2>/dev/null
+num_self="$(wc -l $t)"; num_self="${num_self% *}"
+rm -f $t
+unset t
+
+# Fix the temporary files
+[[ $num_self -gt 1 ]] && {
+    TMPFILE="$( new_tmp_file "$TMPFILE" )"
+    tmpE="$( new_tmp_file "$tmpE" )"
+    tmpT="$( new_tmp_file "$tmpT" )"
+}
+
 # Secure temporary file tmpE:
 secure_file $tmpE
 # Pretend emerge. If it fails, exit. Also do some error checking.
@@ -731,20 +802,22 @@ while ps -p $PID >& /dev/null; do
         pkg_tmp="$( sed -n -e "/${pkg%%/*}\/${pkg##*/}/p" $tmpE | \
             genlop -npq -f $tmpT | \
             sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
-        # Here 9 is totally arbitrary and is meant to take care of
+        # Here 11 is totally arbitrary and is meant to take care of
         # situations where genlop -p says "2 minutes" and the countdown
         # later says "1 minute 55 seconds". Hopefully, it acts as a safety
         # net so that the user never gets a messy display.
-        total_len=$(( $my_len + $len + ${#pkg_tmp} + 9 ))
+        total_len=$(( $my_len + $len + ${#pkg_tmp} + 11 ))
     fi
     if [[ "$tmp" = *Emerging* ]]; then
         if [[ $total_len -lt $cols ]]; then
-            tmp="$( genlop -nqc -f $tmpT | \
+            tmp="$( genlop -nqc -f $tmpT 2>/dev/null | \
+                LC_ALL="C" grep -A3 "$pkg" | \
                 sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
             infolr infor "Emerging $cyan$pkg$normal. ETA:" "$tmp"
         elif [[ $(( $total_len - 14 )) -lt $cols ]]; then
             # We will print an even more simpler expression!!
-            tmp="$( genlop -nqc -f $tmpT | \
+            tmp="$( genlop -nqc -f $tmpT 2>/dev/null | \
+                LC_ALL="C" grep -A3 "$pkg" | \
                 sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
             infolr infor "$cyan$pkg$normal:" "$tmp"
         else
