@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091222                                       #
+        #   Version: 20100119                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,11 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 01/19/2010:   Partly revert genlop -f $tmpT so that genlop#
+        #               gives the correct output with multiple $self#
+        #               Now genlop -c doesn't use tmpT (still buggy)#
+        #               Reimplement multiple instances              #
+        # 01/17/2010:   Revert all multiple instances changes X-(   #
         # 01/16/2010:   Bug fix: revert check for mult. instances   #
         #               while mounting tmpfs                        #
         #               Bug fix: fix pgrep command and count of self#
@@ -268,7 +273,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091222
+    Version: 20100119
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -321,7 +326,6 @@ help() {
 }
 # }}}
 
-
 self="${0##*/}"
 config_dir=$HOME/.config
 config_file="${0##*\/}.config"
@@ -364,7 +368,7 @@ e_opt_verbose=""        # If it is -v, then emerge -vq is launched
 eta=0                   # The total time left for the remaining packages
 exit_status=( 0 0 )     # This counts the # of failed and skipped packages
 my_len=19               # This is the length of "  * Emerging . ETA:"
-num_self=""             # This will hold the # of $self processes running
+num_self=1              # The number of instances of self running
 PID=""                  # The pid of emerge process
 pkg=""                  # This holds the name of current pkg being emerged
 
@@ -416,19 +420,9 @@ exit_prog() {
         kill $PID
         [[ $_MOUNT_TMPFS -eq 1 ]] && sleep 2     # Allow emerge to finish
     fi
-    # Unmount only if status=0 and only one instance of $self is running
-    [[ "$@" -eq 0 ]] && {
-        # There is no easy way to get the num of running processes of $self
-        # ps, pgrep, etc all reports multiple processes instead of the
-        # actual number. I believe they count all the subprocesses too, if
-        # they are called inside a $( ) construct.
-        t=$(mktemp /tmp/$self-pgrep-XXXX)
-        pgrep -f "^[^ ]*($self|bash.*$self)" > $t 2>/dev/null
-        num_self="$(wc -l $t)"
-        rm -f $t
-        unset t
-        [[ "${num_self% *}" -eq 1 ]] && unmount_tmpfs
-    }
+    # Unmount only if status=0 and only one $self process is running
+    get_num_self
+    [[ "$@" -eq 0 && $num_self -eq 1 ]] && unmount_tmpfs
     echo    # This is here so that the exit below takes status of $@
     exit $@
 }
@@ -469,6 +463,19 @@ fix_edo() {
         esac
     done
     export EMERGE_DEFAULT_OPTS="$new_edo"
+}
+
+# get the number of self processes running.
+# Usage: get_num_self
+get_num_self() {
+    # There is no easy way to get the number of running processes of $self
+    # ps, pgrep, etc all reports multiple processes instead of the actual
+    # number. I believe they count all the subprocesses too, if they are
+    # called inside a $( ) construct.
+    local t=$(mktemp /tmp/$self-pgrep-XXXX)
+    pgrep -f "^[^ ]*($self|bash.*$self)" > $t 2>/dev/null
+    num_self="$(wc -l $t)"; num_self="${num_self% *}"
+    rm -f $t
 }
 
 # This is used to print on the left and right with blanks in between
@@ -654,19 +661,10 @@ until [[ -z "$1" ]]; do
     shift
 done
 
-# Set the columns in the terminal
-set_cols
-# There is no easy way to get the number of running processes of $self
-# ps, pgrep, etc all reports multiple processes instead of the actual
-# number. I believe they count all the subprocesses too, if they are called
-# inside a $( ) construct.
-t=$(mktemp /tmp/$self-pgrep-XXXX)
-pgrep -f "^[^ ]*($self|bash.*$self)" > $t 2>/dev/null
-num_self="$(wc -l $t)"; num_self="${num_self% *}"
-rm -f $t
-unset t
 
-# Fix the temporary files
+set_cols            # Set the columns in the terminal
+get_num_self        # Get the number of $self processes running
+# Fix the temporary files if multiple $self are running.
 [[ $num_self -gt 1 ]] && {
     TMPFILE="$( new_tmp_file "$TMPFILE" )"
     tmpE="$( new_tmp_file "$tmpE" )"
@@ -810,14 +808,12 @@ while ps -p $PID >& /dev/null; do
     fi
     if [[ "$tmp" = *Emerging* ]]; then
         if [[ $total_len -lt $cols ]]; then
-            tmp="$( genlop -nqc -f $tmpT 2>/dev/null | \
-                LC_ALL="C" grep -A3 "$pkg" | \
+            tmp="$( genlop -nqc | grep -A3 "$pkg" | \
                 sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
             infolr infor "Emerging $cyan$pkg$normal. ETA:" "$tmp"
         elif [[ $(( $total_len - 14 )) -lt $cols ]]; then
             # We will print an even more simpler expression!!
-            tmp="$( genlop -nqc -f $tmpT 2>/dev/null | \
-                LC_ALL="C" grep -A3 "$pkg" | \
+            tmp="$( genlop -nqc | grep -A3 "$pkg" | \
                 sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
             infolr infor "$cyan$pkg$normal:" "$tmp"
         else
