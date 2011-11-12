@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091023                                       #
+        #   Version: 20091026                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,10 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 10/26/2009:   Bug fix: Include infon from my_bash_function#
+        # 10/25/2009:   Change grep to LC_ALL=C grep.               #
+        #               Give total ETA even with --pretend.         #
+        #               Bug fix: overlay was also being printed.    #
         # 10/23/2009:   Exit if --jobs is given.                    #
         #               Give total emerge time est. if -a is present#
         #               Check for root only after pretend stage, so #
@@ -83,6 +87,12 @@ yellow="\x1b[1;33m"
 # Usage: info "Whatever you want to print"
 info(){
     echo -e "  $yellow*$normal ${@}"
+}
+
+# Print out information without ending with a newline. This adds a space at end
+# Usage: infon "Whatever you want to print"
+infon(){
+    echo -ne "  $yellow*$normal ${@} "
 }
 
 # info with carriage return at end
@@ -187,7 +197,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091023
+    Version: 20091026
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -384,28 +394,31 @@ else
     emerge --color=y -p $e_opt_verbose $cmdline | tee -i $tmpE
     status="${PIPESTATUS[0]}"
 
+    # Clean up tmpE of all colors.
+    sed -i -e 's/\[[^m]*m//g' $tmpE
+
+    echo
+    infor "Estimating total update time ..."
+    centered_output blank " Total ETA: $(cat $tmpE | genlop -npq | \
+        sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' ) "
+    echo
+
     # Now check the command line options for further instructions
     [[ $e_opt_pretend -eq 1 ]] && exit $status
 
     # Check for root now
     [[ $UID -eq 0 ]] || die "root login is required to actually emerge."
 
-    # Clean up tmpE of all colors.
-    sed -i -e 's/\[[^m]*m//g' $tmpE
-
     # Error checking
-    if grep -q '^\[ebuild[ ]*I' $tmpE; then
+    LC_ALL="C" grep -q '^\[ebuild[ ]*I' $tmpE && \
         Err -w "Some packages require user interaction. This script
-    will now exit.\n"
+    will now exit.\n" && \
         exit
-    fi
-    if grep -q '^\[blocks[ ]*B' $tmpE; then
+    LC_ALL="C" grep -q '^\[blocks[ ]*B' $tmpE && \
         die "Hard blocks have been identified. This script will now exit."
-    fi
-    if grep -q '^\[blocks[ ]*b' $tmpE; then
+    LC_ALL="C" grep -q '^\[blocks[ ]*b' $tmpE && \
         info "Soft blocks have been identified. The emerge process will resolve
     the blocks automatically\n"
-    fi
     # More error checks. Check if emerge exited with 0 return value.
     [[ $status -ne 0 ]] && exit $status
     unset status
@@ -416,9 +429,6 @@ else
     # --ask was provided in some form in command line.
     [[ $e_opt_ask -eq 1 ]] && {
         # Provide a total estimate of the time
-        info "The total time estimated for the emerge to complete is:
-    $(cat $tmpE | genlop -pq | \
-        sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
         infon "Continue with the emerge process? \
 ([${green}Y${normal}es]|${red}N${normal}o):"
         read -n 1 tmp; echo
@@ -441,7 +451,7 @@ PID=$!
 
 # Wait till emerge starts spitting out "emerging cat/pkg"
 while ps -p $PID >& /dev/null && \
-    ! grep -qsE -m1 "(Emerging|Installing)" $TMPFILE; do
+    ! LC_ALL="C" grep -qsE -m1 "(Emerging|Installing)" $TMPFILE; do
     sleep $DELAY
 done
 if [[ "$@" = "--resume" ]]; then
@@ -454,11 +464,11 @@ while ps -p $PID >& /dev/null; do
     # Some package is still being emerged.
     # pkg_tmp contains the package currently being emerged. pkg contains
     # the package which was being emerged $DELAY seconds earlier.
-    tmp="$( tac $TMPFILE | grep -E -m1 '(Emerging|Installing)' )"
+    tmp="$( tac $TMPFILE | LC_ALL="C" grep -E -m1 '(Emerging|Installing)' )"
     # The sed expression to get the package name without version was
     # provided by ThinkUrS11 at the Gentoo Forums in around 2006 or 2007:
     # s/\(.*\)-[0-9]\{1,\}.*$/\1/
-    pkg_tmp="$( echo "$tmp" | sed -n -e 's/.*) \([^ ]*\)/\1/p' )"
+    pkg_tmp="$( echo "$tmp" | sed -n -e 's/.*) \([^ ]*\)[ ]\?.*$/\1/p' )"
     if [[ "$pkg_tmp" != "$pkg" ]]; then
         if [[ -n "$pkg" ]]; then
             sed -i -e "/${pkg%%\/*}\/${pkg##*\/}/d" $tmpE
@@ -501,7 +511,7 @@ done
 
 # Either the emerge process is finished or there has been some
 # error in the process
-if tail -n 25 $TMPFILE | grep -qiE "^\!\!\!.*(abort|error)"; then
+if tail -n 25 $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)"; then
     blen=$(( $cols - 25 - $len ))
     info "Emerging $cyan$pkg$normal.   ${BLANK:1:$blen}\
 $red Error!$normal "
@@ -520,12 +530,12 @@ else
 $green Done!$normal "
     fi
     # The emerge process is over. Now check for preserved rebuild notice
-    tail $TMPFILE | grep -qi "preserved" && \
+    tail $TMPFILE | LC_ALL="C" grep -qi "preserved" && \
     info "Preserved libraries found: See $yellow$TMPFILE$normal"
 
     # Update config files.
     if [[ "$TXT_UPDATER" || "$GUI_UPDATER" ]] && \
-        tail $TMPFILE | grep -qEi -m1 "config.*updat"; then
+        tail $TMPFILE | LC_ALL="C" grep -qEi -m1 "config.*updat"; then
         centered_output dash " Updating config files "
 
         # Handle some error cases
@@ -540,7 +550,7 @@ $green Done!$normal "
             Err "No config file updater was found. Check your settings in
     $yellow$config_dir/$config_file$normal\n"
         fi
-    elif tail $TMPFILE | grep -qEi -m1 "config.*updat"; then
+    elif tail $TMPFILE | LC_ALL="C" grep -qEi -m1 "config.*updat"; then
         info "There are pending configuration updates:
 $(tail $TMPFILE)
 
