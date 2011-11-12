@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091112                                       #
+        #   Version: 20091120                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/20/2009:   Respect --ask set in EMERGE_DEFAULT_OPTS    #
         # 11/12/2009:   Show # of skipped and # packages left.      #
         #               Show preserved libs found and do conf update#
         #               even if some package has failed.            #
@@ -243,7 +244,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091112
+    Version: 20091120
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -353,6 +354,29 @@ unmount_tmpfs() {
 # }}}
 
 # Functions specific to this script {{{
+# check EMERGE_DEFAULT_OPTS for --ask. This function checks for -a or --ask
+# and removes it if it is present.
+# Usage: fix_edo 
+fix_edo() {
+    local edo="$( portageq envvar EMERGE_DEFAULT_OPTS )"
+    local new_edo
+    [[ "$edo" ]] || return
+    for e in $edo; do
+        case "$e" in
+            -a|--ask) e_opt_ask=1;;
+            --*)    new_edo="$new_edo $e";;
+            -*)     if [[ "$e" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
+                        new_edo="$new_edo ${e/a/}"
+                        e_opt_ask=1
+                    else
+                        new_edo="$new_edo $e"
+                    fi;;
+            *)      new_edo="$new_edo $e";;
+        esac
+    done
+    export EMERGE_DEFAULT_OPTS="$new_edo"
+}
+
 # Usage: exit_prog [<exit status>]
 exit_prog() {
     [[ -f "$tmpE" ]] && rm -f $tmpE
@@ -372,7 +396,7 @@ exit_prog() {
 }
 
 # Usage: failed_pkgs
-failed_pkgs(){
+failed_pkgs() {
     # This expression is MASSIVE!!
     # This expression relies on the fact that emerge will not
     # fail on still another package within $DELAY seconds. So,
@@ -532,6 +556,9 @@ unset status
 
 # Fix the output in tmpE -- keep only packages to be emerged.
 sed -i -e '/^\[ebuild/!d' $tmpE
+
+# one final place where --ask can be hidden: EMERGE_DEFAULT_OPTS!!
+fix_edo
 
 # --ask was provided in some form in command line.
 [[ $e_opt_ask -eq 1 ]] && {
