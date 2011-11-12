@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20110520                                       #
+        #   Version: 20110521                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,10 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 05/21/2011:   Use wc -[wl] with <$file to avoid extra o/p.#
+        #               Secure TMPFILE should run after mount_tmpfs.#
+        #               Output the total time emerge took.          #
+        #               Bug fix: Revert sed expr for my_genlop -t $p#
         # 05/20/2011:   Bug fix: grep -n -> grep -nF @ my_genlop_eta#
         #               Bug fix: Move/^[ebuild/!d back to after grep#
         #               Bug fix: Fix sed expr in my_genlop. ETA was #
@@ -324,7 +328,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20110520
+    Version: 20110521
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
@@ -430,22 +434,23 @@ unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER \
 declare -a -i exit_status=( 0 0 ) # Count # of failed and skipped packages
 declare -a -i merge_eta     # Keep in memory the est. ETA of current pkg(s)
 declare -a -i merge_start   # Keep in memory start time of current emerge(s)
+declare -i _num=0           # The number of the package being emerged
 declare -i count_lines=1    # Count the number of lines read from TMPFILE
 declare -i e_opt_ask=0      # If it is 1, then ask before emerging
 declare -i e_opt_pretend=0  # If it is 1, then only pretend the emerge
 declare -i my_len=19        # This is the length of "  * Emerging . ETA:"
+declare -i num_line_elog    # Store the total # of lines in old emerge.log
+declare -i num_self=1       # The number of instances of $self running
+declare -i _total_num       # Holds the total # of pkgs going to be merged
 declare -i PID              # The pid of emerge process
-_num=0                      # The number of the package being emerged
 cmdline=""                  # This will hold the arguments passed to emerge
 E_LOG="/var/log/emerge.log" # The file where emerge dumps its logs
 e_opt_color="--color=y"     # This will be set to --color=n if so asked for
 e_opt_resume=""             # If it is '--resume', display "Resuming merge"
 e_opt_verbose=""            # If it is -v, then emerge -vq is launched
-eta=0                       # Total time left for the remaining packages
+eta=""                      # Total time left for the remaining packages
 merge_eta[0]=0              # This will hold the total eta for all pkgs
 newlines=""                 # New lines added to TMPFILE since prev while()
-num_line_elog=0             # Store the total # of lines in old emerge.log
-num_self=1                  # The number of instances of self running
 pkg_all=""                  # Holds the list of all packages
 pkg_installing=""           # Hold the list of package currently installing
 pkg_merging=""              # Hold the list of package currently merging
@@ -591,7 +596,7 @@ get_num_self() {
     # called inside a $( ) construct.
     local t=$(mktemp /tmp/$self-pgrep-XXXX)
     pgrep -f "^[^ ]*($self|bash.*$self)" > $t 2>/dev/null
-    num_self="$(wc -l $t)"; num_self="${num_self% *}"
+    num_self=$(wc -l <$t)
     rm -f $t
 }
 
@@ -709,7 +714,7 @@ my_genlop() {
     done < <( \
         if [[ $t -eq 1 ]]; then
             tac $E_LOG | sed -n -e \
-                "/:::.* completed emerge .*${c}\/${p}-[0-9]\+/,/>>>.* emerge .*${c}\/${p}-[0-9]\+/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1 completed@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1 emerged@p}"
+                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1 completed@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1 emerged@p}"
         else
             sed -n -e \
                 "/:::.* completed emerge .*${c}\/${p}-[0-9]\+/,/>>>.* emerge .*${c}\/${p}-[0-9]\+/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1 completed@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1 emerged@p}" \
@@ -948,7 +953,7 @@ update_term_title() {
     [[ "$DISPLAY" ]] || return
     [[ -f $tmpE ]]   || return
 
-    _num="$(wc -l $tmpE)"; _num="${_num%% *}"
+    _num=$(wc -l <$tmpE)
     # eta holds the total ETA
     eta="$( my_genlop_eta )"
     # Change the terminal title
@@ -1024,7 +1029,7 @@ centered_output dash " Pretended emerge "
 emerge -p $e_opt_color $e_opt_resume $e_opt_verbose $cmdline | tee -i $tmpE
 status="${PIPESTATUS[0]}"
 
-# Clean up tmpE of all colors and keep only packages to be emerged.
+# Clean up tmpE of all colors
 sed -i -e 's/\[[^m]*m//g' $tmpE
 # Keep the list of all packages - used with merge_eta & merge_start
 pkg_all="$( sed -e '/^\[ebuild/!d' $tmpE )"
@@ -1036,7 +1041,7 @@ pkg_all="$( sed -e '/^\[ebuild/!d' $tmpE )"
     # Dump the emerge.log into tmpT
     tac $E_LOG > $tmpT
     # Get the total number of lines in old emerge.log. It's used later.
-    num_line_elog="$( wc -l $tmpT )"; num_line_elog=${num_line_elog%% *}
+    num_line_elog=$( wc -l <$tmpT )
 
     echo 
     if [[ $_ETA_ALL -eq 1 ]]; then
@@ -1091,22 +1096,23 @@ unset status
 }
 
 # Fix the output in tmpE -- keep only packages to be emerged.
-sed -i -e '/^\[ebuild/!d' $tmpE
+echo "$pkg_all" > $tmpE
 
 # Total number of packages which are going to be emerged.
-_total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
-
-# Secure temporary files TMPFILE
-secure_file $TMPFILE
+_total_num=$(wc -l <$tmpE)
 
 # Mount the tmpfs if asked for
 mount_tmpfs
 # Pre-command just before the emerge starts running.
 [[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" 2> /dev/null )" ]] \
     && "$_PRE_CMD" || eval "$_PRE_CMD"
+# Secure temporary files TMPFILE
+secure_file $TMPFILE
 # Start the actual emerge
 emerge -q $e_opt_resume $cmdline >& $TMPFILE &
 PID=$!
+# Store the emerge start time
+merge_eta[0]=$( date -u '+%s' )
 
 echo
 if [[ "$e_opt_resume" = "--resume" ]]; then
@@ -1175,6 +1181,8 @@ jobs, $(($_total_num - $_num + 1))/$_total_num, Total ETA: ${eta}\007"
     sleep $_DELAY
 done
 
+# Store the total time taken for emerge to finish
+merge_eta[0]=$(( $( date -u '+%s' ) - ${merge_eta[0]} ))
 # Either the emerge process is finished or there has been some
 # error in the process
 newlines="$( sed -n -e "${count_lines},\$p" $TMPFILE )"
@@ -1190,10 +1198,14 @@ update_failed       ${tmp}
 pkg_failed
 LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" $TMPFILE && ((exit_status++))
 
+if [[ $_total_num -gt 1 ]]; then
+    centered_output blank " Total time taken: $( get_time ${merge_eta[0]} )"
+    echo
+fi
 
 if [[ $exit_status -ne 0 ]]; then
     # Some package or the other exited with error
-    _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
+    _total_num=$(wc -l <$tmpE)
     Err "Emerge: $red$exit_status failed, $pink${exit_status[1]} skipped, \
 $green$_total_num left$normal
     Some package(s) failed. The last few lines of emerge are:
