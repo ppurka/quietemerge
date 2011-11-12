@@ -2,12 +2,12 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20100407                                       #
+        #   Version: 20110422                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
         #--------------------- License: GPL-3  ---------------------#
-        # Copyright (C) 2009 - 2010  ppurka _at_ gmail _dot_ com    #
+        # Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com    #
         # This program comes with ABSOLUTELY NO WARRANTY;           #
         # This is free software, and you are welcome to redistribute#
         # it under certain conditions;                              #
@@ -22,6 +22,20 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 04/22/2011:   Replace genlop with my own function. This is#
+        #               less featureful but faster and less buggy   #
+        #               than genlop. This is also needed for future #
+        #               --jobs support.                             #
+        #               Introduce e_opt_resume to handle both -r and#
+        #               --resume command line arguments.            #
+        # 12/31/2010:   Bug fix: Increase total_len by 3. mplayer   #
+        #               and thinkfinger were making it exceed 80char#
+        # 10/27/2010:   Bug fix: Handle "Failed to install" errors  #
+        # 10/24/2010:   Add err pattern when ebuild file disappears #
+        #               during  emerge.                             #
+        # 05/25/2010:   Add 2>/dev/null to which (thx to JustJoe at #
+        #               gentoo forums)                              #
+        #               Start of support for --jobs                 #
         # 04/07/2010:   Add config option for a pre- and post- cmd. #
         # 02/22/2010:   Update copyright year.                      #
         # 01/20/2010:   Avoid grep -A3. sed can do the job just fine#
@@ -140,14 +154,8 @@
         # 10/03/2009:   First version of the script                 #
         #-----------------------------------------------------------#
 
-#. `which my_bash_functions 2> /dev/null` || {
-#    echo -e " \x1b[1;31mError!\x1b[0m The script \x1b[1;32mmy_bash_functions\
-#\x1b[0m was not found in your \$PATH
-#        Please ensure that the script is available and executable"
-#    exit 1
-#}
-
 # Set the colors that will be used  # {{{
+cl="$(tput el)"         # clear till end of line
 blue="\x1b[1;34m"
 bold="\x1b[1m"
 cyan="\x1b[1;36m"
@@ -173,7 +181,7 @@ infon(){
 
 # info with carriage return at end
 infor() {
-    echo -ne "  $yellow*$normal $@$(tput el)\r"
+    echo -ne "  $yellow*$normal $@$cl\r"
 }
 
 # Print out error information.
@@ -288,11 +296,10 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20100407
+    Version: 20110422
     "
     info "License: GPL-3
-    Copyright (C) 2009 - 2010  ppurka _at_ gmail _dot_ com
+    Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -379,13 +386,17 @@ tmpT=/tmp/$self.tmpT
 unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER \
     SHOW_MERGE_TIME PRE_CMD POST_CMD
 # Other variables used in the script.
-_num=0                  # The number of the package being emerged.
+_num=0                  # The number of the package being emerged
 cmdline=""              # This will hold the arguments passed to emerge
+E_LOG="/var/log/emerge.log" # The file where emerge dumps its logs
 e_opt_ask=0             # If it is 1, then ask before emerging
 e_opt_pretend=0         # If it is 1, then only pretend the emerge
+e_opt_resume=0          # If it is 1, then display " Resuming merge "
 e_opt_verbose=""        # If it is -v, then emerge -vq is launched
 eta=0                   # The total time left for the remaining packages
 exit_status=( 0 0 )     # This counts the # of failed and skipped packages
+merge_eta=0             # This keeps in memory the est. ETA of current pkg
+merge_start=0           # Keep in memory the start time of current emerge
 my_len=19               # This is the length of "  * Emerging . ETA:"
 num_self=1              # The number of instances of self running
 PID=""                  # The pid of emerge process
@@ -441,7 +452,7 @@ exit_prog() {
     fi
 
     # Post command after everything is over.
-    [[ "$_POST_CMD" && -x "$( which "$_POST_CMD" )" ]] \
+    [[ "$_POST_CMD" && -x "$( which "$_POST_CMD" 2> /dev/null )" ]] \
         && "$_POST_CMD" || eval "$_POST_CMD"
 
     # Unmount only if status=0 and only one $self process is running
@@ -502,11 +513,27 @@ get_num_self() {
     rm -f $t
 }
 
+# Output the time in hours, min, etc, given the number of seconds
+# Usage: get_time <# of seconds>
+get_time() {
+    local -i days hours minutes seconds
+    # date returns in 01 02, etc. We need to prepend the formats with
+    # 10# so that read doesn't interpret 01, 02, etc as octals.
+    [[ "$1" -gt 0 ]] || return
+    read days hours minutes seconds <<< \
+        "$( date -u -d @${1} "+10#%j 10#%H 10#%M 10#%S" )"
+    [[ "$days"    -gt 1 ]]  && echo -n "$(( ${days} - 1 ))d "
+    [[ "$hours"   -gt 0 ]]  && echo -n "${hours}h "
+    [[ "$minutes" -gt 0 ]]  && echo -n "${minutes}m "
+    [[ "$seconds" -gt 0 ]]  && echo -n "${seconds}s "
+    echo ""
+}
+
 # This is used to print on the left and right with blanks in between
 # Usage: infolr <info|infor> "left aligned text" "right aligned text"
 infolr() {
     [[ "$3" ]] || {
-        $1 "$2$(tput el)"
+        $1 "$2$cl"
         return
     }
 
@@ -526,7 +553,8 @@ last_pkg_failed() {
 
     # Check for "$p fail" message
     LC_ALL="C" grep -qi "error.*$p fail"        $TMPFILE && return 0
-    LC_ALL="C" grep -q  "Failed to emerge.*$p"  $TMPFILE && return 0
+    LC_ALL="C" grep -q  "Failed to .*$p"        $TMPFILE && return 0
+    LC_ALL="C" grep -qi "ebuild not found.*$p"  $TMPFILE && return 0
 
     # Check for access violation message in the latest package
     # Sed expression obtained from sed one-liners @ google search:
@@ -552,13 +580,88 @@ last_pkg_failed() {
 # Usage: merge_time "cat/pkg-ver"
 merge_time() {
     if [[ $_SHOW_MERGE_TIME -eq 1 ]]; then
-        # Hopefully there won't be too many lines appended to log file
-        # within 5 seconds. So, 40 should be a safe limit.
-        tail -n $(($num_self*40)) /var/log/emerge.log > $tmpT 2> /dev/null
-        genlop -f $tmpT -nt "$1" 2> /dev/null \
-            | sed -n '/merge time:/s/.*: \(.*\)$/\1/p' | tail -n 1
+        get_time "$( my_genlop -t "$1" )"
     else
         echo "Done! "
+    fi
+}
+
+# Replacement for genlop. This only returns the average time (in seconds)
+# needed to emerge a package. If -t is used then it will return the time
+# required (in seconds) for the latest merge of the package
+# The packagename must be provided without version otherwise it will only
+# look for packages with that specific version
+# Usage: my_genlop [-t] category/packagename[-ver]
+my_genlop() {
+    local -i cnt=0 tmp=0 tmp_sum=0 t=0
+    local line c p
+    if [[ "$1" = "-t" ]]; then
+        t=1
+        c="${2%%/*}"
+        p="${2##*/}"
+    else
+        c="${1%%/*}"
+        p="${1##*/}"
+    fi
+    while read line; do
+        if [[ "$tmp" -eq 0 ]]; then
+            tmp="$line"
+        else
+            tmp_sum=$(( $tmp_sum + $tmp - $line ))
+            ((cnt++))
+            tmp=0
+            # Use this until I have a better sed expression which can quit
+            # immediately after processing the first block of /:::/,/>>>/
+            [[ $t -eq 1 ]] && break
+        fi
+    done < <( \
+        if [[ $t -eq 1 ]]; then
+            tac $E_LOG | sed -n -e \
+                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1@p}"
+        else
+            sed -n -e \
+                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1@p}" \
+                "$tmpT"
+        fi )
+    [[ "$cnt" -gt 0 ]] && echo "$(( $tmp_sum / $cnt ))"
+}
+
+# Function to give the ETA for the emerge of current package or emerge
+# list in tmpE
+# If the start_time of current pkg is not given then it reads the list
+# from tmpE and behaves like "cat $tmpE | genlop -p"
+# Usage: my_genlop_eta [start_time]
+my_genlop_eta() {
+    local -i total_time=0
+    if [[ -n "$1" ]]; then
+        if [[ $merge_eta -eq 0 ]]; then
+            echo ""
+        else
+            # Use the merge_start and merge_eta variables.
+            # Don't call my_genlop all the time
+            # total-time = eta - ( curr time - emerge start time )
+            total_time="$(( $merge_eta - $( date -u '+%s' ) + $1 ))"
+            if [[ "$total_time" -le 0 ]]; then
+                echo "any time now"
+            else
+                get_time "$total_time"
+            fi
+        fi
+    else
+        local p
+        while read p; do
+            [[ "$p" =~ ^\[ebuild.* ]] || continue
+            p="${p#*]}"
+            # Change cat/pkg-ver to cat/pkg
+            p="$( echo "$p" | sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*$/\1/' )"
+            p="$( my_genlop $p )" || p=0
+            total_time="$(( $total_time + $p ))"
+        done <$tmpE
+        if [[ "$total_time" -eq 0 ]]; then
+            echo ""
+        else
+            get_time "$total_time"
+        fi
     fi
 }
 
@@ -609,6 +712,12 @@ parse_cmdline() {
         cmd="${cmd/q/}"
     fi
 
+    # Check for -r embedded in the command
+    if [[ "$cmd" =~ -[a-qs-zA-Z0-9]*r[a-qs-zA-Z0-9]* ]]; then
+        cmd="${cmd/r/}"
+        e_opt_resume=1
+    fi
+
     # Check for -v embedded in the command
     if [[ "$cmd" =~ -[a-uw-zA-Z0-9]*v[a-uw-zA-Z0-9]* ]]; then
         cmd="${cmd/v/}"
@@ -645,9 +754,8 @@ update_term_title() {
     [[ -f $tmpE ]]   || return
 
     _num="$(wc -l $tmpE)"; _num="${_num%% *}"
-    # tmp holds the total ETA
-    eta="$(cat $tmpE | genlop -npq | \
-        sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
+    # eta holds the total ETA
+    eta="$( my_genlop_eta )"
     # Change the terminal title
     echo -ne "\x1b]0;$(($_total_num - $_num + 1))/$_total_num: ${pkg#*\/},\
  Total ETA: ${eta}\007"
@@ -661,12 +769,6 @@ update_term_title() {
 trap "exit_prog 1" 1 2 5 15
 trap "set_cols" WINCH
 
-# First some error checking.
-which genlop >& /dev/null || \
-    die "This script requires ${cyan}app-portage/genlop$normal installed.
-    Is genlop installed and in your \$PATH?\n"
-
-
 # Main program starts here.
 # Nice output
 # First parse the command line
@@ -677,6 +779,7 @@ until [[ -z "$1" ]]; do
     directly if you want this functionality.";;
         -p|--pretend)   e_opt_pretend=1;;
         -q|--quiet)     ;;
+        -r|--resume)    e_opt_resume=1;;
         -v|--verbose)   e_opt_verbose="-v";;
         --*)            cmdline="$cmdline $1";;
         -*)             parse_cmdline "$1";;
@@ -695,8 +798,10 @@ get_num_self        # Get the number of $self processes running
     tmpT="$( new_tmp_file "$tmpT" )"
 }
 
-# Secure temporary file tmpE:
+# Secure temporary file tmpE and tmpT:
 secure_file $tmpE
+secure_file $tmpT
+
 # Pretend emerge. If it fails, exit. Also do some error checking.
 centered_output dash " Pretended emerge "
 emerge --color=y -p $e_opt_verbose $cmdline | tee -i $tmpE
@@ -705,11 +810,13 @@ status="${PIPESTATUS[0]}"
 # Clean up tmpE of all colors.
 sed -i -e 's/\[[^m]*m//g' $tmpE
 
+# Dump the emerge.log into tmpT
+tac $E_LOG > $tmpT
+
 [[ $status -eq 0 ]] && {
     echo
     infor "Estimating total update time ..."
-    centered_output blank " Total ETA: $( cat $tmpE | genlop -npq | \
-        sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' ) "
+    centered_output blank " Total ETA: $( my_genlop_eta )"
     echo
 }
 
@@ -759,21 +866,20 @@ fix_edo
 # Total number of packages which are going to be emerged.
 _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
 
-# Secure temporary files TMPFILE and tmpT
-secure_file $tmpT
+# Secure temporary files TMPFILE
 secure_file $TMPFILE
 
 # Mount the tmpfs if asked for
 mount_tmpfs
 # Pre-command just before the emerge starts running.
-[[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" )" ]] \
+[[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" 2> /dev/null )" ]] \
     && "$_PRE_CMD" || eval "$_PRE_CMD"
 # Start the actual emerge
 emerge -q $cmdline >& $TMPFILE &
 PID=$!
 
 echo
-if [[ "$@" = *--resume* ]]; then
+if [[ $e_opt_resume -eq 1 ]]; then
     centered_output dash " Resuming merge "
 else
     centered_output dash " Starting emerge "
@@ -804,7 +910,7 @@ while ps -p $PID >& /dev/null; do
                 failed_pkgs
             else
                 infolr info "Install  $cyan$pkg$normal." \
-                    "$green$( merge_time "=$pkg" )$normal"
+                    "$green$( merge_time "$pkg" )$normal"
             fi
         fi
         pkg="$pkg_tmp"
@@ -812,42 +918,33 @@ while ps -p $PID >& /dev/null; do
         update_term_title
         printf -vBLANK "%${cols}s" ""
 
-        # Dump pkg data from emerge.log to tmpT to make genlop faster
-        # Roughly, genlop will take 0.1sec instead of 0.4sec for
-        # an emerge.log which is of length 32k lines, for a pkg which has
-        # been emerged lots of times.
         # Following sed expression was provided by ThinkUrS11 @ gentoo
         # forums in 2006 or 2007. It extracts cat/pkg from cat/pkg-version
         pkg_tmp="$( echo $pkg | sed -e 's/^\(.*\)-[0-9]\{1,\}.*$/\1/' )"
-        LC_ALL="C" grep -C10 "$pkg_tmp" /var/log/emerge.log > $tmpT
 
-        # Find out the total length of the line that will be printed
-        # Now, pkg_tmp contains the string of max length of genlop -c
-        # possible for this package.
-        pkg_tmp="$( sed -n -e "/${pkg%%/*}\/${pkg##*/}/p" $tmpE | \
-            genlop -npq -f $tmpT | \
-            sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
-        # Here 11 is totally arbitrary and is meant to take care of
-        # situations where genlop -p says "2 minutes" and the countdown
-        # later says "1 minute 55 seconds". Hopefully, it acts as a safety
-        # net so that the user never gets a messy display.
-        total_len=$(( $my_len + $len + ${#pkg_tmp} + 11 ))
+        # Determine the total eta (in seconds) of the current package
+        merge_eta="$( my_genlop "$pkg_tmp" )" || merge_eta=0
+        # Determine when pkg started merging
+        merge_start="$( tac $E_LOG | sed -n -e \
+            "/>>>.* emerge .*${pkg%%/*}\/${pkg##*/}/{s@^\([0-9]\+\):.*@\1@p;q;}" )"
+
+        # Here 12 is the max # of places that will be taken by the display
+        # of the ETA. Example: "10d 12h 14m 33s"
+        total_len=$(( $my_len + $len + 12 ))
     fi
     if [[ "$tmp" = *Emerging* ]]; then
         if [[ $total_len -lt $cols ]]; then
-            tmp="$( genlop -nqc | sed -n \
-                "/${pkg%%/*}\/${pkg##*/}/,/ETA: /s/^[ ]*ETA:[ ]*//p" )"
-            infolr infor "Emerging $cyan$pkg$normal. ETA:" "$tmp"
+            infolr infor "Emerging $cyan$pkg$normal. ETA:" \
+                "$green$( my_genlop_eta $merge_start )$normal"
         elif [[ $(( $total_len - 14 )) -lt $cols ]]; then
             # We will print an even more simpler expression!!
-            tmp="$( genlop -nqc | sed -n \
-                "/${pkg%%/*}\/${pkg##*/}/,/ETA: /s/^[ ]*ETA:[ ]*//p" )"
-            infolr infor "$cyan$pkg$normal:" "$tmp"
+            infolr infor "$cyan$pkg$normal:" \
+                "$green$( my_genlop_eta $merge_start )$normal"
         else
-            infor "Emerging $cyan$pkg$normal.$(tput el)"
+            infor "Emerging $cyan$pkg$normal.$cl"
         fi
     else
-        infor "Installing $cyan$pkg$normal.$(tput el)"
+        infor "Installing $cyan$pkg$normal.$cl"
     fi
     # Change the terminal title -- this is a constant fight with emerge!!
     # Hope the terminal doesn't mind! ;-)
@@ -878,7 +975,7 @@ elif [[ $exit_status -ne 0 ]]; then
     # The latest package emerged fine. Otherwise the error would be picked
     # up by the previous line.
     infolr info "Install  $cyan$pkg$normal." \
-        "${green}$( merge_time "=$pkg" )$normal"
+        "${green}$( merge_time "$pkg" )$normal"
     _total_num="$(wc -l $tmpE)"; _total_num="$(( ${_total_num%% *} - 1 ))"
     Err "Emerge: $red$exit_status failed, $pink${exit_status[1]} skipped, \
 $green$_total_num left$normal
@@ -889,7 +986,7 @@ else
     # Looks like everything went fine :-/
     # Bug fix: check that $len is actually non-empty.
     [[ "$len" ]] && infolr info "Install  $cyan$pkg$normal." \
-        "$green$( merge_time "=$pkg" )$normal"
+        "$green$( merge_time "$pkg" )$normal"
 fi
 
 # The emerge process is over. Now check for preserved rebuild notice
