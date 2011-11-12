@@ -2,12 +2,12 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20100119                                       #
+        #   Version: 20100407                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
         #--------------------- License: GPL-3  ---------------------#
-        # Copyright (C) 2009  ppurka _at_ gmail _dot_ com           #
+        # Copyright (C) 2009 - 2010  ppurka _at_ gmail _dot_ com    #
         # This program comes with ABSOLUTELY NO WARRANTY;           #
         # This is free software, and you are welcome to redistribute#
         # it under certain conditions;                              #
@@ -22,6 +22,9 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 04/07/2010:   Add config option for a pre- and post- cmd. #
+        # 02/22/2010:   Update copyright year.                      #
+        # 01/20/2010:   Avoid grep -A3. sed can do the job just fine#
         # 01/19/2010:   Partly revert genlop -f $tmpT so that genlop#
         #               gives the correct output with multiple $self#
         #               Now genlop -c doesn't use tmpT (still buggy)#
@@ -259,6 +262,19 @@ setup_config_file() {
 # Whether we should display the latest merge time instead of "Done!" after
 # a package has been emerged. Default is 0 (no). Set it to 1 to enable it.
 # SHOW_MERGE_TIME=0
+#
+# You can set a pre-command here which will be run just before the actual
+# emerge is started. If the MOUNT_TMPFS option is enabled, then it is run
+# just after the tmpfs is mounted.
+# Default is empty.
+# PRE_CMD=""
+#
+# You can also set a post-command which is run just before the tmpfs is
+# unmounted and after any cleanups performed by the script itself is done.
+# This post-command will be run even if the script is killed by pressing
+# for example Ctrl-C.
+# Default is empty.
+# POST_CMD=""
 
 END
 
@@ -273,10 +289,10 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20100119
+    Version: 20100407
     "
     info "License: GPL-3
-    Copyright (C) 2009  ppurka _at_ gmail _dot_ com
+    Copyright (C) 2009 - 2010  ppurka _at_ gmail _dot_ com
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -358,7 +374,10 @@ tmpT=/tmp/$self.tmpT
 : ${_TXT_UPDATER:=$TXT_UPDATER}
 : ${_GUI_UPDATER:=$GUI_UPDATER}
 : ${_SHOW_MERGE_TIME:=${SHOW_MERGE_TIME:-0}}
-unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER SHOW_MERGE_TIME
+: ${_PRE_CMD:=$PRE_CMD}
+: ${_POST_CMD:=$POST_CMD}
+unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER \
+    SHOW_MERGE_TIME PRE_CMD POST_CMD
 # Other variables used in the script.
 _num=0                  # The number of the package being emerged.
 cmdline=""              # This will hold the arguments passed to emerge
@@ -420,6 +439,11 @@ exit_prog() {
         kill $PID
         [[ $_MOUNT_TMPFS -eq 1 ]] && sleep 2     # Allow emerge to finish
     fi
+
+    # Post command after everything is over.
+    [[ "$_POST_CMD" && -x "$( which "$_POST_CMD" )" ]] \
+        && "$_POST_CMD" || eval "$_POST_CMD"
+
     # Unmount only if status=0 and only one $self process is running
     get_num_self
     [[ "$@" -eq 0 && $num_self -eq 1 ]] && unmount_tmpfs
@@ -741,6 +765,9 @@ secure_file $TMPFILE
 
 # Mount the tmpfs if asked for
 mount_tmpfs
+# Pre-command just before the emerge starts running.
+[[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" )" ]] \
+    && "$_PRE_CMD" || eval "$_PRE_CMD"
 # Start the actual emerge
 emerge -q $cmdline >& $TMPFILE &
 PID=$!
@@ -808,13 +835,13 @@ while ps -p $PID >& /dev/null; do
     fi
     if [[ "$tmp" = *Emerging* ]]; then
         if [[ $total_len -lt $cols ]]; then
-            tmp="$( genlop -nqc | grep -A3 "$pkg" | \
-                sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
+            tmp="$( genlop -nqc | sed -n \
+                "/${pkg%%/*}\/${pkg##*/}/,/ETA: /s/^[ ]*ETA:[ ]*//p" )"
             infolr infor "Emerging $cyan$pkg$normal. ETA:" "$tmp"
         elif [[ $(( $total_len - 14 )) -lt $cols ]]; then
             # We will print an even more simpler expression!!
-            tmp="$( genlop -nqc | grep -A3 "$pkg" | \
-                sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
+            tmp="$( genlop -nqc | sed -n \
+                "/${pkg%%/*}\/${pkg##*/}/,/ETA: /s/^[ ]*ETA:[ ]*//p" )"
             infolr infor "$cyan$pkg$normal:" "$tmp"
         else
             infor "Emerging $cyan$pkg$normal.$(tput el)"
