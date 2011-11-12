@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091202                                       #
+        #   Version: 20091222                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,11 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/21/2009:   Change output during next iteration if term #
+        #               size changes.                               #
+        # 12/19/2009:   Bug fix: Catching ACCESS VIOLATION should be#
+        #               less buggy now.                             #
+        # 12/05/2009:   Genlop should be slightly faster now.       #
         # 12/02/2009:   Enable support for environment variables,   #
         #               which can temporarily override the settings #
         #               in the config file.                         #
@@ -258,7 +263,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091202
+    Version: 20091222
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -381,6 +386,38 @@ unmount_tmpfs() {
 # }}}
 
 # Functions specific to this script {{{
+# Check whether the last package failed, at the end of emerge process
+# Usage: last_pkg_failed <pkg>
+last_pkg_failed() {
+    local p_tmp p="$1" num=40
+
+    # Check for "$p fail" message
+    LC_ALL="C" grep -qi "error.*$p fail"        $TMPFILE && return 0
+    LC_ALL="C" grep -q  "Failed to emerge.*$p"  $TMPFILE && return 0
+
+    # Check for access violation message in the latest package
+    # Sed expression obtained from sed one-liners @ google search:
+    #   it prints the line immediately preceding ACCESS... message
+    sed -ne '/ACCESS VIOLATION SUMMARY/{g;1!p;};h' $TMPFILE | \
+        while read p_tmp; do
+            p_tmp="${p_tmp#*portage\/}"; p_tmp="${p_tmp%\/work\/*}"
+            [[ "$p_tmp" = "$p" ]] && return 0
+        done
+
+    # Check for fetch restriction fails
+    tail -n $num $TMPFILE | LC_ALL="C" grep -qiE "fetch failed.*$p" \
+        && return 0
+
+    # check for generic error
+    tail -n $num $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" \
+        && return 0
+
+    # $p has been merged successfully
+    return 1
+}
+
+
+    
 # Usage: exit_prog [<exit status>]
 exit_prog() {
     [[ -f "$tmpE" ]] && rm -f $tmpE
@@ -510,6 +547,11 @@ secure_file() {
     }
 }
 
+# Set the number of columns in the terminal
+# Usage: set_cols
+set_cols() {
+    cols=$(tput cols)
+}
 
 # Usage: update_term_title
 update_term_title() {
@@ -532,6 +574,7 @@ update_term_title() {
 
 # Try to exit gracefully.
 trap "exit_prog 1" 1 2 5 15
+trap "set_cols" WINCH
 
 # First some error checking.
 which genlop >& /dev/null || \
@@ -557,6 +600,8 @@ until [[ -z "$1" ]]; do
     shift
 done
 
+# Set the columns in the terminal
+set_cols
 # Secure temporary file tmpE:
 secure_file $tmpE
 # Pretend emerge. If it fails, exit. Also do some error checking.
@@ -570,7 +615,7 @@ sed -i -e 's/\[[^m]*m//g' $tmpE
 [[ $status -eq 0 ]] && {
     echo
     infor "Estimating total update time ..."
-    centered_output blank " Total ETA: $(cat $tmpE | genlop -npq | \
+    centered_output blank " Total ETA: $( cat $tmpE | genlop -npq | \
         sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' ) "
     echo
 }
@@ -621,12 +666,12 @@ fix_edo
 # Total number of packages which are going to be emerged.
 _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
 
+# Secure temporary files TMPFILE and tmpT
+secure_file $tmpT
+secure_file $TMPFILE
+
 # Mount the tmpfs if asked for
 mount_tmpfs
-
-# Secure temporary files TMPFILE and tmpT
-[[ $_SHOW_MERGE_TIME -eq 1 ]] && secure_file $tmpT
-secure_file $TMPFILE
 # Start the actual emerge
 emerge -q $cmdline >& $TMPFILE &
 PID=$!
@@ -669,14 +714,22 @@ while ps -p $PID >& /dev/null; do
         pkg="$pkg_tmp"
         len=${#pkg}
         update_term_title
-        cols=$(tput cols)       # In case the terminal size changed
         printf -vBLANK "%${cols}s" ""
+
+        # Dump pkg data from emerge.log to tmpT to make genlop faster
+        # Roughly, genlop will take 0.1sec instead of 0.4sec for
+        # an emerge.log which is of length 32k lines, for a pkg which has
+        # been emerged lots of times.
+        # Following sed expression was provided by ThinkUrS11 @ gentoo
+        # forums in 2006 or 2007. It extracts cat/pkg from cat/pkg-version
+        pkg_tmp="$( echo $pkg | sed -e 's/^\(.*\)-[0-9]\{1,\}.*$/\1/' )"
+        LC_ALL="C" grep -C10 "$pkg_tmp" /var/log/emerge.log > $tmpT
 
         # Find out the total length of the line that will be printed
         # Now, pkg_tmp contains the string of max length of genlop -c
         # possible for this package.
         pkg_tmp="$( sed -n -e "/${pkg%%/*}\/${pkg##*/}/p" $tmpE | \
-            genlop -npq | \
+            genlop -npq -f $tmpT | \
             sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
         # Here 9 is totally arbitrary and is meant to take care of
         # situations where genlop -p says "2 minutes" and the countdown
@@ -686,11 +739,13 @@ while ps -p $PID >& /dev/null; do
     fi
     if [[ "$tmp" = *Emerging* ]]; then
         if [[ $total_len -lt $cols ]]; then
-            tmp="$( genlop -nqc | sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
+            tmp="$( genlop -nqc -f $tmpT | \
+                sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
             infolr infor "Emerging $cyan$pkg$normal. ETA:" "$tmp"
         elif [[ $(( $total_len - 14 )) -lt $cols ]]; then
             # We will print an even more simpler expression!!
-            tmp="$( genlop -nqc | sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
+            tmp="$( genlop -nqc -f $tmpT | \
+                sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p' )"
             infolr infor "$cyan$pkg$normal:" "$tmp"
         else
             infor "Emerging $cyan$pkg$normal.$(tput el)"
@@ -709,10 +764,7 @@ done
 
 # Either the emerge process is finished or there has been some
 # error in the process
-if LC_ALL="C" grep -qi "error.*$pkg fail" $TMPFILE || \
-    LC_ALL="C" grep -q "ACCESS VIOLATION SUMMARY" $TMPFILE || \
-    tail -n 25 $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" || \
-    tail -n 25 $TMPFILE | LC_ALL="C" grep -qiE "fetch failed.*$pkg"; then
+if last_pkg_failed "$pkg"; then
     infolr info "Emerging $cyan$pkg$normal." "${red}Error!$normal "
     ((exit_status++))
     failed_pkgs
