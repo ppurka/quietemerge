@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091102                                       #
+        #   Version: 20091105                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,9 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/05/2009:   Bug fix: Workaround bug in genlop again.    #
+        #               Bug fix: Pressing just enter should take in #
+        #               "yes" as the answer when --ask is used.     #
         # 11/02/2009:   Determine the PORTAGE_TMPDIR by portageq,and#
         #               mount tmpfs on to PORTAGE_TMPDIR/portage    #
         #               Added a new config option: SHOW_MERGE_TIME  #
@@ -222,7 +225,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091102
+    Version: 20091105
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -471,7 +474,7 @@ else
 ([${green}Y${normal}es]|${red}N${normal}o):"
         read -n 1 tmp; echo
         case "$tmp" in
-            [yY]*)  ;;
+            ""|[yY]*)  ;;
             *)      exit_prog;;
         esac
     }
@@ -531,8 +534,9 @@ ${red}Error!$normal "
             else
                 sed -i -e "/${pkg%%\/*}\/${pkg##*\/}/d" $tmpE
                 if [[ $SHOW_MERGE_TIME -eq 1 ]]; then
-                    tmp1="$( genlop -nt --date 3 minute ago "=$pkg" | \
-                        sed -n -e 's/.*merge time: \(.*\)$/\1/p' )"
+                    tmp1="$( genlop -nt "=$pkg" | \
+                        sed -n '/merge time:/s/.*: \(.*\)$/\1/p' \
+                        | tail -n 1 )"
                     # We need +4 because "ETA:" is gone.
                     blen=$(( $cols - $my_len + 4 - ${#tmp1} - $len ))
                     [[ $blen -lt 1 ]] && blen=1
@@ -622,8 +626,8 @@ else
     # Bug fix: check that $len is actually non-empty.
     if [[ "$len" ]]; then
         if [[ $SHOW_MERGE_TIME -eq 1 ]]; then
-            tmp1="$( genlop -nt --date 3 minute ago "=$pkg" | \
-                sed -n -e 's/.*merge time: \(.*\)$/\1/p' )"
+            tmp1="$( genlop -nt "=$pkg" | \
+                sed -n '/merge time:/s/.*: \(.*\)$/\1/p' | tail -n 1 )"
             # We need +4 because "ETA:" is gone.
             blen=$(( $cols - $my_len + 4 - ${#tmp1} - $len ))
             [[ $blen -lt 1 ]] && blen=1
