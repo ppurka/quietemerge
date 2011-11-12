@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091120                                       #
+        #   Version: 20091121                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,7 +22,17 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
-        # 11/20/2009:   Respect --ask set in EMERGE_DEFAULT_OPTS    #
+        # 11/21/2009:   Bug fix: Really arcane bug! Packages with   #
+        #               fetch restrictions error out so fast that   #
+        #               the packages' status is not even displayed! #
+        #               So, I had to change sleep $DELAY to sleep 1 #
+        #               in the first while loop.                    #
+        # 11/20/2009:   Bug fix: Check for old temp files and delete#
+        #               them if needed. This fixes security concern #
+        #               raised by 0x4a47 at gentoo forums.          #
+        #               Bug fix: Also, rename tmp files a little bit#
+        #               Bug fix: Check for fetch restricted packages#
+        #               Respect --ask set in EMERGE_DEFAULT_OPTS    #
         # 11/12/2009:   Show # of skipped and # packages left.      #
         #               Show preserved libs found and do conf update#
         #               even if some package has failed.            #
@@ -244,7 +254,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091120
+    Version: 20091121
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -311,9 +321,9 @@ fi
 
 
 # Variables used in this script. Modify only if you know what you are doing
-TMPFILE=/tmp/output.log
-tmpE=/tmp/tmpE.$UID
-tmpT=/tmp/tmpT
+TMPFILE=/tmp/${0##*/}.output.log
+tmpE=/tmp/${0##*/}.tmpE.$UID
+tmpT=/tmp/${0##*/}.tmpT
 : ${DELAY:=5}
 : ${MOUNT_TMPFS:=0}
 : ${SHOW_MERGE_TIME:=0}
@@ -354,29 +364,6 @@ unmount_tmpfs() {
 # }}}
 
 # Functions specific to this script {{{
-# check EMERGE_DEFAULT_OPTS for --ask. This function checks for -a or --ask
-# and removes it if it is present.
-# Usage: fix_edo 
-fix_edo() {
-    local edo="$( portageq envvar EMERGE_DEFAULT_OPTS )"
-    local new_edo
-    [[ "$edo" ]] || return
-    for e in $edo; do
-        case "$e" in
-            -a|--ask) e_opt_ask=1;;
-            --*)    new_edo="$new_edo $e";;
-            -*)     if [[ "$e" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
-                        new_edo="$new_edo ${e/a/}"
-                        e_opt_ask=1
-                    else
-                        new_edo="$new_edo $e"
-                    fi;;
-            *)      new_edo="$new_edo $e";;
-        esac
-    done
-    export EMERGE_DEFAULT_OPTS="$new_edo"
-}
-
 # Usage: exit_prog [<exit status>]
 exit_prog() {
     [[ -f "$tmpE" ]] && rm -f $tmpE
@@ -410,6 +397,29 @@ failed_pkgs() {
     done
 }
 
+# check EMERGE_DEFAULT_OPTS for --ask. This function checks for -a or --ask
+# and removes it if it is present.
+# Usage: fix_edo 
+fix_edo() {
+    local edo="$( portageq envvar EMERGE_DEFAULT_OPTS )"
+    local new_edo
+    [[ "$edo" ]] || return
+    for e in $edo; do
+        case "$e" in
+            -a|--ask) e_opt_ask=1;;
+            --*)    new_edo="$new_edo $e";;
+            -*)     if [[ "$e" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
+                        new_edo="$new_edo ${e/a/}"
+                        e_opt_ask=1
+                    else
+                        new_edo="$new_edo $e"
+                    fi;;
+            *)      new_edo="$new_edo $e";;
+        esac
+    done
+    export EMERGE_DEFAULT_OPTS="$new_edo"
+}
+
 # This is used to print on the left and right with blanks in between
 # Usage: infolr <info|infor> "left aligned text" "right aligned text"
 infolr() {
@@ -441,7 +451,7 @@ merge_time() {
 }
 
 # Usage: parse_cmdline "-some_command"
-parse_cmdline(){
+parse_cmdline() {
     local cmd="$1"
     # Check for -a embedded in the command
     if [[ "$cmd" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
@@ -468,6 +478,19 @@ parse_cmdline(){
 
     # If there is any other option left, then assign it
     [[ "$cmd" != "-" ]] && cmdline="$cmdline $cmd"
+}
+
+# Check temporary files for security related problems
+# For now, just delete the file. This should take care of most security
+# concerns. 
+# Usage: secure_file <filename>
+secure_file() {
+    # Security measure. Delete the temporary file if it exists.
+    [[ -e "$1" ]] && {
+        rm -f "$1" || \
+        die "Could not delete $yellow$1$normal
+    Check if it is a directory, or if it is immutable.\n"
+    }
 }
 
 
@@ -517,6 +540,8 @@ until [[ -z "$1" ]]; do
     shift
 done
 
+# Secure temporary file tmpE:
+secure_file $tmpE
 # Pretend emerge. If it fails, exit. Also do some error checking.
 centered_output dash " Pretended emerge "
 emerge --color=y -p $e_opt_verbose $cmdline | tee -i $tmpE
@@ -549,7 +574,11 @@ LC_ALL="C" grep -q '^\[blocks[ ]*B' $tmpE && \
     exit_prog $status
 LC_ALL="C" grep -q '^\[blocks[ ]*b' $tmpE && \
     info "Soft blocks have been identified. The emerge process will resolve
-    the blocks automatically\n"
+    the blocks automatically.\n"
+LC_ALL="C" grep -qE '^\[ebuild[^]]+F' $tmpE && \
+    Err -w "Packages with fetch restrictions have been identified. The
+    emerge process will fail if the packages are not downloaded manually.
+    " && sleep 2
 # More error checks. Check if emerge exited with 0 return value.
 [[ $status -ne 0 ]] && exit_prog $status
 unset status
@@ -578,6 +607,9 @@ _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
 # Mount the tmpfs if asked for
 mount_tmpfs
 
+# Secure temporary files TMPFILE and tmpT
+[[ $SHOW_MERGE_TIME -eq 1 ]] && secure_file $tmpT
+secure_file $TMPFILE
 # Start the actual emerge
 emerge -q $cmdline >& $TMPFILE &
 PID=$!
@@ -593,7 +625,7 @@ echo
 # Wait till emerge starts spitting out "emerging cat/pkg"
 while ps -p $PID >& /dev/null && \
     ! LC_ALL="C" grep -qsE -m1 "(Emerging|Installing)" $TMPFILE; do
-    sleep $DELAY
+    sleep 1
 done
 
 while ps -p $PID >& /dev/null; do
@@ -662,7 +694,8 @@ done
 # error in the process
 if LC_ALL="C" grep -qi "error.*$pkg fail" $TMPFILE || \
     LC_ALL="C" grep -q "ACCESS VIOLATION SUMMARY" $TMPFILE || \
-    tail -n 25 $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)"; then
+    tail -n 25 $TMPFILE | LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" || \
+    tail -n 25 $TMPFILE | LC_ALL="C" grep -qiE "fetch failed.*$pkg"; then
     infolr info "Emerging $cyan$pkg$normal." "${red}Error!$normal "
     ((exit_status++))
     failed_pkgs
@@ -684,7 +717,7 @@ elif [[ $exit_status -ne 0 ]]; then
     _total_num="$(wc -l $tmpE)"; _total_num="$(( ${_total_num%% *} - 1 ))"
     Err "Emerge: $red$exit_status failed, $pink${exit_status[1]} skipped, \
 $green$_total_num left$normal
-    See $yellow$TMPFILE$normal.
+    See $yellow$TMPFILE$normal
     "
     sleep 1
 else
