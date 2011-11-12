@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20110611                                       #
+        #   Version: 20110617                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,10 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 06/17/2011:   Bugfix: autounmask-write@EMERGE_DEFAULT_OPTS#
+        #               wasn't working properly.                    #
+        #               Update the config update grep string to inc-#
+        #               lude config message from --autounmask-write #
         # 06/11/2011:   export FEATURES="notitles"-no need to update#
         #               xterm title so frequently now.              #
         #               Support for --autounmask-write.             #
@@ -331,7 +335,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20110611
+    Version: 20110617
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
@@ -389,7 +393,7 @@ config_dir=$HOME/.config
 config_file="${0##*\/}.config"
 # Display help in xterm if user clicked on the file
 if [[ -z "$@" && "$DISPLAY" ]] && ! tty -s; then
-    xterm -hold -e "$(dirname $0)/$(basename $0)" -h; exit
+    exec xterm -hold -e "$(dirname "$0")/$(basename "$0")" -h
 elif [[ -z "$@" || "$@" = -h* || "$@" = --h* ]]; then
     help
     exit
@@ -566,8 +570,9 @@ fix_edo() {
     local edo="$( portageq envvar EMERGE_DEFAULT_OPTS )"
     local new_edo
     [[ "$edo" ]] || return
-    for e in $edo; do
-        case "$e" in
+    set -- ${edo}
+    until [[ -z "$1" ]]; do
+        case "$1" in
             -a|--ask) e_opt_ask=1;;
             --autounmask-write*)
                     if [[ "$2" = "y" || "$2" = "n" ]]; then
@@ -577,22 +582,23 @@ fix_edo() {
                         e_opt_auto="$1"
                     fi ;;
             --color*)
-                    if [[ "$e" = *=n ]]; then
+                    if [[ "$1" = *=n ]]; then
                         e_opt_color="--color=n"
                     elif [[ "${edo/--color n}" != "$edo" ]]; then
                         e_opt_color="--color=n"
                     fi 
                     # Don't change the edo itself. Let it remain.
-                    new_edo="$new_edo $e";;
-            --*)    new_edo="$new_edo $e";;
-            -*)     if [[ "$e" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
-                        new_edo="$new_edo ${e/a/}"
+                    new_edo="$new_edo $1";;
+            --*)    new_edo="$new_edo $1";;
+            -*)     if [[ "$1" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
+                        new_edo="$new_edo ${1/a/}"
                         e_opt_ask=1
                     else
-                        new_edo="$new_edo $e"
+                        new_edo="$new_edo $1"
                     fi;;
-            *)      new_edo="$new_edo $e";;
+            *)      new_edo="$new_edo $1";;
         esac
+        shift
     done
     export EMERGE_DEFAULT_OPTS="$new_edo"
 }
@@ -1244,7 +1250,8 @@ tail $TMPFILE | LC_ALL="C" grep -qi "preserved" && \
 
 # Update config files.
 if [[ "$_TXT_UPDATER" || "$_GUI_UPDATER" ]] && \
-    tail $TMPFILE | LC_ALL="C" grep -qEi -m1 "config.*updat"; then
+    tail $TMPFILE | LC_ALL="C" grep -qEi -m1 \
+    "(config.*updat|run etc-update)"; then
     centered_output dash " Updating config files "
 
     # Handle some error cases
