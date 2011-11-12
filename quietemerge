@@ -2,46 +2,200 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
+        #   Version: 20091012                                       #
         #                                           -ppurka         #
+        #-----------------------------------------------------------#
+
+        #--------------------- License: GPL-3  ---------------------#
+        # Copyright (C) 2009  ppurka _at_ gmail _dot_ com           #
+        # This program comes with ABSOLUTELY NO WARRANTY;           #
+        # This is free software, and you are welcome to redistribute#
+        # it under certain conditions;                              #
+        #                                                           #
+        # For a brief summary of the license see the help text of   #
+        # this program by executing:                                #
+        # quietemerge --help                                        #
+        #                                                           #
+        # For the full text of the license see                      #
+        # http://www.gnu.org/licenses/gpl-3.0.html                  #
         #-----------------------------------------------------------#
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
-        # 10/10/2009:   Accept -h* or --h* and show help text       #
+        # 10/12/2009:   Bug fix: avoid setting terminal title when  #
+        #               we are in console.                          #
+        #               Bug fix: sometimes wrong package count would#
+        #               be shown in terminal titlebar.              #
+        #               Bug fix: if no pkg has actually been emerged#
+        #               then $len remains empty, and a bash error   #
+        #               occurs.                                     #
+        #               Avoid running genlop when package is being  #
+        #               installed (i.e. in install/qmerge stage)    #
+        #               Add a Version and a vim Modeline :)         #
+        # 10/11/2009:   For eventual release into the gentoo forum: #
+        #               1. lots of error checks                     #
+        #               2. create a config file. The defaults are   #
+        #                  sane. It should not matter if the user   #
+        #                  does not modify the config file.         #
+        #               3. make tmpfs mounting optional,- disabled  #
+        #                  by default.                              #
+        #               4. Add a license.                           #
+        #               5. Add the functions from my_bash_functions #
+        #                  inline in this script.                   #
         # 10/09/2009:   Updated script to show the correct count of #
         #               packages. Also, this warns on B Blocks and  #
         #               interactive packages.                       #
         # 10/03/2009:   First version of the script                 #
         #-----------------------------------------------------------#
 
-        # Todo
-        # 1. check for genlop, o/w tell user to install genlop
-        # 2. cfg-update.. make it generic.
-        # 3. Ask user to configure script
-        # 4. MOUNT_TMPFS ... make it command line env. var.
-        # 5. License
+#. `which my_bash_functions 2> /dev/null` || {
+#    echo -e " \x1b[1;31mError!\x1b[0m The script \x1b[1;32mmy_bash_functions\
+#\x1b[0m was not found in your \$PATH
+#        Please ensure that the script is available and executable"
+#    exit 1
+#}
 
-. `which my_bash_functions 2> /dev/null` || {
-    echo -e " \x1b[1;31mError!\x1b[0m The script \x1b[1;32mmy_bash_functions\
-\x1b[0m was not found in your \$PATH
-        Please ensure that the script is available and executable"
+# Set the colors that will be used  # {{{
+blue="\x1b[1;34m"
+bold="\x1b[1m"
+cyan="\x1b[1;36m"
+green="\x1b[1;32m"
+normal="\x1b[0m"
+pink="\x1b[1;35m"
+red="\x1b[1;31m"
+reverse="\x1b[7m"
+underline="\x1b[4m"
+yellow="\x1b[1;33m"
+
+# Print out information.
+# Usage: info "Whatever you want to print"
+info(){
+    echo -e "  $yellow*$normal ${@}"
+}
+
+# info with carriage return at end
+infor() {
+    echo -ne "  $yellow*$normal $@$(tput el)\r"
+}
+
+# Print out error information.
+# Usage: Err "Whatever you want to print"
+Err(){
+    local color="$red" msg="ERROR"
+    [[ "$1" = "-w" ]] && color="$pink" && msg="WARNING"
+    echo -e "  $color*$normal [$color $msg!!$normal ] ${@/-w/}" >&2
+}
+
+die() {
+    Err "$@"
     exit 1
 }
 
-# Variables used
-TMPFILE=/tmp/output.log
-tmpE=/tmp/tmpE
-MOUNT_TMPFS=1
-DELAY=5
+# Usage: centered_output dash|blank "text string"
+# where text is less than cols characters in length
+centered_output() {
+    local cols=$(tput cols)
+    local len="$(echo "$2" | sed -e 's#\\x1[bB]\[[^m]\+m##g')"
+    len=${#len}
+    if [[ $len -ge $cols ]]; then
+        echo -e "$2"
+        return
+    fi
+
+    # Create D_ASH and BLANK dynamically according to terminal width
+    # Solution got via google:
+    # http://www.unix.com/shell-programming-scripting/46584-repeat-character-printf.html#post302150959
+    printf -vBLANK "%${cols}s" ""
+    local D_ASH="${BLANK// /-}"
+    local begin=$(( $cols/2 - $len/2 ));    # Length of dash|blank before text
+    local end=$(( $cols - $begin - $len )); # Length of dash|blank after text
+    if [[ -z "$2" ]]; then
+        if [[ "$1" = "dash" ]]; then echo $D_ASH; return
+        else echo; return
+        fi
+    fi
+    if [[ "$1" = "dash" ]]; then
+        echo -e "${D_ASH:1:$begin}$reverse${2//\\x1[bB]\[0m/\x1b[0m$reverse}\
+$normal${D_ASH:1:$end}"
+    else
+        echo -e "${BLANK:1:$begin}$reverse${2//\\x1[bB]\[0m/\x1b[0m$reverse}\
+$normal${BLANK:1:$end}"
+    fi
+}
+# }}}
+
+setup_config_file() {
+    info "$yellow$config_dir/$config_file$normal config file not found. Creating ...
+    "
+    [[ ! -d "$config_dir" ]] && {
+        mkdir -p "$config_dir" || die "Could not create $config_dir"
+    }
+    cat <<END > "$config_dir/$config_file"
+# quietemerge config file
+#
+# Delay after which genlop will be called (in a loop).
+# Default is 5 seconds.
+# DELAY=5
+#
+# Should we mount tmpfs on to /var/tmp/portage? This should be used only
+# if you have enough RAM. For example emerging gcc with +java USE flag
+# requires about 2G RAM for storage. Emerging openoffice probably requires
+# even more. Change value to 1 to enable tmpfs. Default is 0 (no).
+# MOUNT_TMPFS=0
+#
+# Amount of RAM that will be mounted on to /var/tmp/portage if MOUNT_TMPFS
+# is 1.
+# See the man page of mount for the values that can be given to TMPFS_SIZE.
+# Look for the valid values of the "size" mount option of tmpfs.
+# Default is half the size of your total RAM.
+# TMPFS_SIZE=50%
+#
+# The console based program that is used to update /etc,/usr config files
+# Examples of such programs are cfg-update, dispatch-conf, etc-update,
+# etc-proposals, conf-update
+# Default is empty.
+# TXT_UPDATER=""
+#
+# The graphical program that is used to update /etc,/usr config files
+# Examples are cfg-update, etc-proposals.
+# Default is TXT_UPDATER
+# GUI_UPDATER="\$TXT_UPDATER"
+
+END
+
+info "Open $yellow$config_dir/$config_file$normal and modify the settings
+    to your own liking.
+    "
+    sleep 5
+}
 
 # Help me!! {{{
 help() {
     local self="${0##*\/}"
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    It uses genlop to provide an estimate of the time left"
+    It uses app-portage/genlop to provide an estimate of the time left.
+    Version: 20091012
+    "
+    info "License: GPL-3
+    Copyright (C) 2009  ppurka _at_ gmail _dot_ com
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    "
+
     info "Usage:     $self [<options>]"
-    info "Options:   
+    info "Options:
     -h | --help     Show this help text
 
     All other options are passed directly to emerge.
@@ -49,52 +203,90 @@ help() {
     If no arguments are provided to $self, then this help text is shown.
     "
     info "The following options of emerge should not be provided to this
-    script. No checks are performed to see if the options passed to the
-    script adhere to these suggestions.
-    -a, --jobs=<num>
+    script. ${red}No error checks are performed to see if the options
+    passed to the script adhere to these suggestions.$normal
+    -a, --jobs=<num>, -v, --sync
+    There may also be other options of emerge which break this script.
     "
-    info "Recommended way to call this script:
-    $self -uD world --keep-going
+
+    info "Configuration:
+    Some basic configuration related to this script is stored in
+    $yellow$config_dir/$config_file$normal
+    "
+    info "Examples on how to call this script:
+    $self -uD world
+    $self -1 glibc vim
+    $self --resume
     "
 }
 # }}}
 
 
+config_dir=$HOME/.config
+config_file="${0##*\/}.config"
 # Display help in xterm if user clicked on the file
-if [[ -z $@ && $DISPLAY ]] && ! tty -s; then
-    xterm -hold -e "$(dirname $0)/$(basename $0)"; exit
+if [[ -z "$@" && "$DISPLAY" ]] && ! tty -s; then
+    xterm -hold -e "$(dirname $0)/$(basename $0)" -h; exit
 elif [[ -z "$@" || "$@" = -h* || "$@" = --h* ]]; then
     help
     exit
 fi
 
-# Mounting and unmounting tmpfs#{{{
+# Source the config file
+if [[ -f "$config_dir/$config_file" ]]; then
+    . "$config_dir/$config_file"
+else
+    setup_config_file
+    exit
+fi
+
+
+# Variables used in this script. Modify only if you know what you are doing
+TMPFILE=/tmp/output.log
+tmpE=/tmp/tmpE
+: ${MOUNT_TMPFS:=0}
+: ${DELAY:=5}
+
+# Mounting and unmounting tmpfs. These fns take no argument #{{{
 mount_tmpfs() {
     [[ $MOUNT_TMPFS -ne 1 ]] && return 0
     if mount | grep -q -s -w "tmpfs on /var/tmp/portage"; then
         info "tmpfs is already mounted\n"
+    elif [[ "$TMPFS_SIZE" ]]; then
+        mount -t tmpfs -o size=${TMPFS_SIZE} tmpfs /var/tmp/portage
     else
         mount -t tmpfs tmpfs /var/tmp/portage
     fi
-    [[ $? -ne 0 ]] && die "Error in mounting tmpfs"
+    [[ $? -ne 0 ]] && die "Error in mounting tmpfs\n"
 }
 unmount_tmpfs() {
     if mount | grep -q -s -w "tmpfs on /var/tmp/portage"; then
         umount /var/tmp/portage
-    else
-        Err "tmpfs is not mounted\n"
     fi
-    [[ $? -ne 0 ]] && die "Error in unmounting tmpfs"
+    [[ $? -ne 0 ]] && die "Error in unmounting tmpfs\n"
 } 
 # }}}
 
+# Usage: exit_prog [<exit status>]
 exit_prog() {
     #rm $tmpE
+    echo        # I like echoes!
+    # If emerge process is running and the script has reached here, then
+    # kill the emerge process.
+    if ps -p $PID >& /dev/null; then
+        Err -w "The emerge process given by PID: $PID is still running.
+    The emerge process will be killed.\n"
+        kill $PID
+    fi
     unmount_tmpfs
-    exit 0
+    echo    # This is here so that the exit below takes status of $@
+    exit $@
 }
 
 update_term_title() {
+    # Don't try to update the terminal title of console!
+    [[ "$DISPLAY" ]] || return
+
     local _num="$(wc -l $tmpE)"; _num="${_num%% *}"
     # tmp holds the total ETA
     local eta="$(cat $tmpE | genlop -np | \
@@ -105,25 +297,45 @@ update_term_title() {
 }
 
 
+# Try to exit gracefully.
+trap "exit_prog" 1 2 5 15
+
+# First some error checking.
+[[ $UID -eq 0 ]] || die "This script can be run only as root."
+which genlop >& /dev/null || \
+    die "This script requires ${cyan}app-portage/genlop$normal installed.
+    Is genlop installed and in your \$PATH?\n"
+
+
+# Main program starts here.
+
+# Mount the tmpfs if asked for
 mount_tmpfs
+
 # Pretend emerge. If it fails, exit. Also do some error checking.
 e_out="$(emerge -pq $* 2>&1)"
 status="$?"
-if echo "$e_out" | grep '^\[ebuild I'; then
-    Err -w "Packages identified which require user interaction. This script
-    will now exit"
-    exit 0
+if echo "$e_out" | grep -q '^\[ebuild[ ]*I'; then
+    echo "$e_out"
+    Err -w "Some packages require user interaction. This script
+    will now exit.\n"
+    exit_prog
 fi
-if echo "$e_out" | grep '^\[blocks B'; then
-    die "Hard blocks have been identified. This script will now exit."
+if echo "$e_out" | grep -q '^\[blocks[ ]*B'; then
+    echo "$e_out"
+    Err "Hard blocks have been identified. This script will now exit."
+    exit_prog 1
 fi
-if echo "$e_out" | grep -q '^\[blocks b'; then
+if echo "$e_out" | grep -q '^\[blocks[ ]*b'; then
     info "Soft blocks have been identified. The emerge process will resolve
     the blocks automatically\n"
 fi
 echo "$e_out" | grep '^\[ebuild' > $tmpE
-[[ $status -ne 0 ]] && cat $tmpE && exit $status
+# More error checks. Check if emerge exited with 0 return value.
+[[ $status -ne 0 ]] && echo "$e_out" && exit_prog $status
 unset e_out status
+
+# Total number of packages which are going to be emerged.
 _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
 pkg=
 
@@ -146,13 +358,19 @@ fi
 
 while ps -p $PID >& /dev/null; do
     # Some package is still being emerged.
-    pkg_tmp="$(tac $TMPFILE | grep -E -m1 '(Emerging|Installing)' | sed -n \
-        's/.*) \([^ ]*\)/\1/p' | sed -e 's/^\(.*\)-[0-9]\{1,\}.*$/\1/')"
+    # pkg_tmp contains the package currently being emerged. pkg contains
+    # the package which was being emerged $DELAY seconds earlier.
+    tmp="$( tac $TMPFILE | grep -E -m1 '(Emerging|Installing)' )"
+    # The sed expression to get the package name without version was
+    # provided by ThinkUrS11 at the Gentoo Forums in around 2006 or 2007:
+    # s/\(.*\)-[0-9]\{1,\}.*$/\1/
+    pkg_tmp="$( echo "$tmp" | sed -n -e 's/.*) \([^ ]*\)/\1/p' \
+        | sed -e 's/^\(.*\)-[0-9]\{1,\}.*$/\1/' )"
     if [[ "$pkg_tmp" != "$pkg" ]]; then
         if [[ -n "$pkg" ]]; then
-            sed -i -e "/${pkg%%\/*}\/${pkg##*\/}/d" $tmpE
+            sed -i -e "/${pkg%%\/*}\/${pkg##*\/}-[0-9]\+/d" $tmpE
             blen=$(( $cols - 24 - $len ))
-            info "Emerging $cyan$pkg$normal.   ${BLANK:1:$blen}\
+            info "Install  $cyan$pkg$normal.   ${BLANK:1:$blen}\
 $green Done!$normal "
         fi
         pkg="$pkg_tmp"
@@ -168,14 +386,22 @@ $green Done!$normal "
         # display
     fi
     if [[ $total_len -gt $cols ]]; then
-        infor "Emerging $cyan$pkg$normal."
+        if [[ "$tmp" = *Emerging* ]]; then
+            infor "Emerging $cyan$pkg$normal."
+        else
+            infor "Installing  $cyan$pkg$normal."
+        fi 
     else
-        reply="$(genlop -n -c | sed -n '/ETA: /s/^[ ]*ETA: //p')"
-        # Here 27 is the length of "  * Emerging .Time left:"
-        blen=$(($cols - 27 - $len - ${#reply} ))
-        [[ $blen -le 0 ]] && blen=1
-        infor "Emerging $cyan$pkg$normal. Time left:\
+        if [[ "$tmp" = *Emerging* ]]; then
+            reply="$(genlop -n -c | sed -n '/ETA: /s/^[ ]*ETA: //p')"
+            # Here 27 is the length of "  * Emerging .Time left:"
+            blen=$(($cols - 27 - $len - ${#reply} ))
+            [[ $blen -le 0 ]] && blen=1
+            infor "Emerging $cyan$pkg$normal. Time left:\
 ${BLANK:1:$blen}${reply/*ETA:/} "
+        else
+            infor "Installing  $cyan$pkg$normal.$(tput el)"
+        fi
     fi
     sleep $DELAY
 done
@@ -185,7 +411,7 @@ done
 if tail -n 25 $TMPFILE | grep -qiE "^\!\!\!.*(abort|error)"; then
     blen=$(( $cols - 25 - $len ))
     info "Emerging $cyan$pkg$normal.   ${BLANK:1:$blen}\
-$green Error!$normal "
+$red Error!$normal "
     # Some error happened
     die "Some error occured during emerge. 
 The last few lines of emerge are:\n$(tail -n 25 $TMPFILE)
@@ -193,19 +419,43 @@ The last few lines of emerge are:\n$(tail -n 25 $TMPFILE)
 See $yellow$TMPFILE$normal for the full error message.
 "
 else
-    blen=$(( $cols - 24 - $len ))
-    info "Emerging $cyan$pkg$normal.   ${BLANK:1:$blen}\
+    # Looks like everything went fine :-/
+    # Bug fix: check that $len is actually non-empty.
+    if [[ "$len" ]]; then
+        blen=$(( $cols - 24 - $len ))
+        info "Install  $cyan$pkg$normal.   ${BLANK:1:$blen}\
 $green Done!$normal "
-    # The emerge process is over
+    fi
+    # The emerge process is over. Now check for preserved rebuild notice
     tail $TMPFILE | grep -qi "preserved" && \
         info "Preserved libraries found: See $yellow${TMPFILE}$normal"
-    if tail $TMPFILE | grep -qEi -m1 "config.*updat"; then
+
+    # Update config files.
+    if [[ "$TXT_UPDATER" || "$GUI_UPDATER" ]] && \
+        tail $TMPFILE | grep -qEi -m1 "config.*updat"; then
         centered_output dash " Updating config files "
+
+        # Handle some error cases
+        [[ "$TXT_UPDATER" && -z "$GUI_UPDATER" ]] && \
+            GUI_UPDATER="$TXT_UPDATER"
+
         if [[ -n "$DISPLAY" ]]; then
-            cfg-update -u
+                $GUI_UPDATER
+        elif [[ "$TXT_UPDATER" ]]; then
+                $TXT_UPDATER
         else
-            cfg-update -t vimdiff -u
+            Err "No config file updater was found. Check your settings in
+    $yellow$config_dir/$config_file$normal\n"
         fi
+    elif tail $TMPFILE | grep -qEi -m1 "config.*updat"; then
+        info "There are pending configuration updates:
+$(tail $TMPFILE)
+
+    See $yellow$TMPFILE$normal for more information.
+    "
     fi
 fi
 exit_prog
+
+
+# vim: set ai et fdm=marker ff=unix sta sts=4 sw=4 ts=4 tw=75 : 
