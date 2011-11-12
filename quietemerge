@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091012                                       #
+        #   Version: 20091023                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,18 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 10/23/2009:   Exit if --jobs is given.                    #
+        #               Give total emerge time est. if -a is present#
+        #               Check for root only after pretend stage, so #
+        #               even non-root users can use this with -p    #
+        #               Add -q to genlop command.                   #
+        #               Check MOUNT_TMPFS before unmounting         #
+        #               Bug fix: Check whether PID is empty before  #
+        #               trying to kill emerge                       #
+        # 10/17/2009:   Bug fix: I guess no one tried --resume with #
+        #               this script. It was definitely broken ;-)   #
+        #               Initial code for --ask. The code can now    #
+        #               potentially handle other emerge switches too#
         # 10/12/2009:   Bug fix: avoid setting terminal title when  #
         #               we are in console.                          #
         #               Bug fix: sometimes wrong package count would#
@@ -175,7 +187,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091012
+    Version: 20091023
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -205,7 +217,7 @@ help() {
     info "The following options of emerge should not be provided to this
     script. ${red}No error checks are performed to see if the options
     passed to the script adhere to these suggestions.$normal
-    -a, --jobs=<num>, -v, --sync
+    --jobs=<num>, --sync, -C, -c
     There may also be other options of emerge which break this script.
     "
 
@@ -246,6 +258,13 @@ TMPFILE=/tmp/output.log
 tmpE=/tmp/tmpE
 : ${MOUNT_TMPFS:=0}
 : ${DELAY:=5}
+pkg=
+PID=""                  # The pid of emerge process
+cmdline=""              # This will hold the arguments passed to emerge
+e_opt_ask=0             # If it is 1, then ask before emerging
+e_opt_pretend=0         # If it is 1, then only pretend the emerge
+e_opt_verbose=""        # If it is -v, then emerge -vq is launched
+
 
 # Mounting and unmounting tmpfs. These fns take no argument #{{{
 mount_tmpfs() {
@@ -260,6 +279,8 @@ mount_tmpfs() {
     [[ $? -ne 0 ]] && die "Error in mounting tmpfs\n"
 }
 unmount_tmpfs() {
+    # Do not mess with tmpfs mounted without this script
+    [[ $MOUNT_TMPFS -ne 1 ]] && return 0
     if mount | grep -q -s -w "tmpfs on /var/tmp/portage"; then
         umount /var/tmp/portage
     fi
@@ -269,27 +290,58 @@ unmount_tmpfs() {
 
 # Usage: exit_prog [<exit status>]
 exit_prog() {
-    #rm $tmpE
     echo        # I like echoes!
     # If emerge process is running and the script has reached here, then
     # kill the emerge process.
-    if ps -p $PID >& /dev/null; then
+    if [[ "$PID" ]] && ps -p $PID >& /dev/null; then
         Err -w "The emerge process given by PID: $PID is still running.
     The emerge process will be killed.\n"
         kill $PID
+        [[ $MOUNT_TMPFS -eq 1 ]] && sleep 2     # Allow emerge to finish
     fi
     unmount_tmpfs
     echo    # This is here so that the exit below takes status of $@
     exit $@
 }
 
+parse_cmdline(){
+    local cmd="$1"
+    # Check for -a embedded in the command
+    if [[ "$cmd" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
+        cmd="${cmd/a/}"
+        e_opt_ask=1
+    fi
+
+    # Check for -p embedded in the command
+    if [[ "$cmd" =~ -[a-oq-zA-Z0-9]*p[a-oq-zA-Z0-9]* ]]; then
+        cmd="${cmd/p/}"
+        e_opt_pretend=1
+    fi
+
+    # Check for -q embedded in the command
+    if [[ "$cmd" =~ -[a-pr-zA-Z0-9]*q[a-pr-zA-Z0-9]* ]]; then
+        cmd="${cmd/q/}"
+    fi
+
+    # Check for -v embedded in the command
+    if [[ "$cmd" =~ -[a-uw-zA-Z0-9]*v[a-uw-zA-Z0-9]* ]]; then
+        cmd="${cmd/v/}"
+        e_opt_verbose="-v"
+    fi
+
+    # If there is any other option left, then assign it
+    [[ "$cmd" != "-" ]] && cmdline="$cmdline $cmd"
+}
+
+
 update_term_title() {
     # Don't try to update the terminal title of console!
     [[ "$DISPLAY" ]] || return
+    [[ -f $tmpE ]]   || return
 
     local _num="$(wc -l $tmpE)"; _num="${_num%% *}"
     # tmp holds the total ETA
-    local eta="$(cat $tmpE | genlop -np | \
+    local eta="$(cat $tmpE | genlop -npq | \
         sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
     # Change the terminal title
     echo -ne "\x1b]0;$(($_total_num - $_num + 1))/$_total_num: ${pkg#*\/},\
@@ -301,46 +353,90 @@ update_term_title() {
 trap "exit_prog" 1 2 5 15
 
 # First some error checking.
-[[ $UID -eq 0 ]] || die "This script can be run only as root."
 which genlop >& /dev/null || \
     die "This script requires ${cyan}app-portage/genlop$normal installed.
     Is genlop installed and in your \$PATH?\n"
 
 
 # Main program starts here.
+# Nice output
+if [[ "$@" = "--resume" ]]; then
+    cmdline="$@"
+else
+    # First parse the command line
+    until [[ -z "$1" ]]; do
+        case "$1" in
+            -a|--ask)       e_opt_ask=1;;
+            -j*|--jobs)     die "-j or --jobs is not allowed. Use emerge
+    directly if you want this functionality.";;
+            -p|--pretend)   e_opt_pretend=1;;
+            -q|--quiet)     ;;
+            -v|--verbose)   e_opt_verbose="-v";;
+            --*)            cmdline="$cmdline $1";;
+            -*)             parse_cmdline "$1";;
+            *)              cmdline="$cmdline $1";;
+        esac
+        shift
+    done
+
+    # Pretend emerge. If it fails, exit. Also do some error checking.
+    centered_output dash " Pretended emerge "
+    emerge --color=y -p $e_opt_verbose $cmdline | tee -i $tmpE
+    status="${PIPESTATUS[0]}"
+
+    # Now check the command line options for further instructions
+    [[ $e_opt_pretend -eq 1 ]] && exit $status
+
+    # Check for root now
+    [[ $UID -eq 0 ]] || die "root login is required to actually emerge."
+
+    # Clean up tmpE of all colors.
+    sed -i -e 's/\[[^m]*m//g' $tmpE
+
+    # Error checking
+    if grep -q '^\[ebuild[ ]*I' $tmpE; then
+        Err -w "Some packages require user interaction. This script
+    will now exit.\n"
+        exit
+    fi
+    if grep -q '^\[blocks[ ]*B' $tmpE; then
+        die "Hard blocks have been identified. This script will now exit."
+    fi
+    if grep -q '^\[blocks[ ]*b' $tmpE; then
+        info "Soft blocks have been identified. The emerge process will resolve
+    the blocks automatically\n"
+    fi
+    # More error checks. Check if emerge exited with 0 return value.
+    [[ $status -ne 0 ]] && exit $status
+    unset status
+
+    # Fix the output in tmpE -- keep only packages to be emerged.
+    sed -i -e '/^\[ebuild/!d' $tmpE
+
+    # --ask was provided in some form in command line.
+    [[ $e_opt_ask -eq 1 ]] && {
+        # Provide a total estimate of the time
+        info "The total time estimated for the emerge to complete is:
+    $(cat $tmpE | genlop -pq | \
+        sed -n -e '/Estimated update time/s/^.*: \(.*\)$/\1/p' )"
+        infon "Continue with the emerge process? \
+([${green}Y${normal}es]|${red}N${normal}o):"
+        read -n 1 tmp; echo
+        case "$tmp" in
+            [yY]*)  ;;
+            *)      exit;;
+        esac
+    }
+
+    # Total number of packages which are going to be emerged.
+    _total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
+fi
 
 # Mount the tmpfs if asked for
 mount_tmpfs
 
-# Pretend emerge. If it fails, exit. Also do some error checking.
-e_out="$(emerge -pq $* 2>&1)"
-status="$?"
-if echo "$e_out" | grep -q '^\[ebuild[ ]*I'; then
-    echo "$e_out"
-    Err -w "Some packages require user interaction. This script
-    will now exit.\n"
-    exit_prog
-fi
-if echo "$e_out" | grep -q '^\[blocks[ ]*B'; then
-    echo "$e_out"
-    Err "Hard blocks have been identified. This script will now exit."
-    exit_prog 1
-fi
-if echo "$e_out" | grep -q '^\[blocks[ ]*b'; then
-    info "Soft blocks have been identified. The emerge process will resolve
-    the blocks automatically\n"
-fi
-echo "$e_out" | grep '^\[ebuild' > $tmpE
-# More error checks. Check if emerge exited with 0 return value.
-[[ $status -ne 0 ]] && echo "$e_out" && exit_prog $status
-unset e_out status
-
-# Total number of packages which are going to be emerged.
-_total_num="$(wc -l $tmpE)"; _total_num="${_total_num%% *}"
-pkg=
-
 # Start the actual emerge
-emerge -q $* 2>&1 > $TMPFILE &
+emerge -q $cmdline 2>&1 > $TMPFILE &
 PID=$!
 
 # Wait till emerge starts spitting out "emerging cat/pkg"
@@ -348,9 +444,7 @@ while ps -p $PID >& /dev/null && \
     ! grep -qsE -m1 "(Emerging|Installing)" $TMPFILE; do
     sleep $DELAY
 done
-
-# Nice output
-if [[ "$*" = *--resume* ]]; then
+if [[ "$@" = "--resume" ]]; then
     centered_output dash " Resuming merge "
 else
     centered_output dash " Starting emerge "
@@ -364,11 +458,10 @@ while ps -p $PID >& /dev/null; do
     # The sed expression to get the package name without version was
     # provided by ThinkUrS11 at the Gentoo Forums in around 2006 or 2007:
     # s/\(.*\)-[0-9]\{1,\}.*$/\1/
-    pkg_tmp="$( echo "$tmp" | sed -n -e 's/.*) \([^ ]*\)/\1/p' \
-        | sed -e 's/^\(.*\)-[0-9]\{1,\}.*$/\1/' )"
+    pkg_tmp="$( echo "$tmp" | sed -n -e 's/.*) \([^ ]*\)/\1/p' )"
     if [[ "$pkg_tmp" != "$pkg" ]]; then
         if [[ -n "$pkg" ]]; then
-            sed -i -e "/${pkg%%\/*}\/${pkg##*\/}-[0-9]\+/d" $tmpE
+            sed -i -e "/${pkg%%\/*}\/${pkg##*\/}/d" $tmpE
             blen=$(( $cols - 24 - $len ))
             info "Install  $cyan$pkg$normal.   ${BLANK:1:$blen}\
 $green Done!$normal "
@@ -378,8 +471,8 @@ $green Done!$normal "
         cols=$(tput cols)       # In case the terminal size changed
         printf -vBLANK "%${cols}s" ""
         len=${#pkg}
-        total_len=$(( $len + 52 ))
-        # 52 seems to be a safe number about the additional cols that
+        total_len=$(( $len + 60 ))
+        # 60 seems to be a safe number about the additional cols that
         # will probably be added to the package name
         # If this is true, then don't update the line everytime.
         # Give the simplest output possible without messing up the
@@ -393,12 +486,12 @@ $green Done!$normal "
         fi 
     else
         if [[ "$tmp" = *Emerging* ]]; then
-            reply="$(genlop -n -c | sed -n '/ETA: /s/^[ ]*ETA: //p')"
+            tmp="$(genlop -nq -c | sed -n '/ETA: /s/^[ ]*ETA:[ ]*//p')"
             # Here 27 is the length of "  * Emerging .Time left:"
-            blen=$(($cols - 27 - $len - ${#reply} ))
+            blen=$(($cols - 27 - $len - ${#tmp} ))
             [[ $blen -le 0 ]] && blen=1
             infor "Emerging $cyan$pkg$normal. Time left:\
-${BLANK:1:$blen}${reply/*ETA:/} "
+${BLANK:1:$blen} $tmp"
         else
             infor "Installing  $cyan$pkg$normal.$(tput el)"
         fi
@@ -414,9 +507,9 @@ if tail -n 25 $TMPFILE | grep -qiE "^\!\!\!.*(abort|error)"; then
 $red Error!$normal "
     # Some error happened
     die "Some error occured during emerge. 
-The last few lines of emerge are:\n$(tail -n 25 $TMPFILE)
+    The last few lines of emerge are:\n$(tail -n 25 $TMPFILE)
 
-See $yellow$TMPFILE$normal for the full error message.
+    See $yellow$TMPFILE$normal for the full error message.
 "
 else
     # Looks like everything went fine :-/
@@ -428,7 +521,7 @@ $green Done!$normal "
     fi
     # The emerge process is over. Now check for preserved rebuild notice
     tail $TMPFILE | grep -qi "preserved" && \
-        info "Preserved libraries found: See $yellow${TMPFILE}$normal"
+    info "Preserved libraries found: See $yellow$TMPFILE$normal"
 
     # Update config files.
     if [[ "$TXT_UPDATER" || "$GUI_UPDATER" ]] && \
