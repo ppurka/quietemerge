@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20110422                                       #
+        #   Version: 20110430                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,16 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 04/30/2011:   Recognize --color=n given in command line.  #
+        #               Bug fix: work around duplicates in E_LOG.   #
+        #               Bug fix: Increase max length of ETA to 15.  #
+        #                   This _may_ fix "any time no" in output  #
+        # 04/27/2011:   Create config file only if run as root.     #
+        #               Add option to show per-package ETA.         #
+        #               Add rudimentary detection of old config file#
+        #               Bug fix: Pass --resume on to emerge command.#
+        # 04/23/2011:   Make sure tmpT is secured only just prior to#
+        #               writing to it                               #
         # 04/22/2011:   Replace genlop with my own function. This is#
         #               less featureful but faster and less buggy   #
         #               than genlop. This is also needed for future #
@@ -167,6 +177,8 @@ reverse="\x1b[7m"
 underline="\x1b[4m"
 yellow="\x1b[1;33m"
 
+COLORS=( blue bold cyan green normal pink red reverse underline yellow )
+
 # Print out information.
 # Usage: info "Whatever you want to print"
 info(){
@@ -283,6 +295,12 @@ setup_config_file() {
 # for example Ctrl-C.
 # Default is empty.
 # POST_CMD=""
+#
+# If you want to show the estimated emerge time for all the individual
+# packages, before the actual emerge (i.e. during the "Pretended emerge"
+# stage), then set ETA_ALL to 1.
+# Default is 0
+# ETA_ALL=0
 
 END
 
@@ -296,7 +314,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20110422
+    Version: 20110430
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
@@ -360,13 +378,25 @@ elif [[ -z "$@" || "$@" = -h* || "$@" = --h* ]]; then
     exit
 fi
 
-# Source the config file
-if [[ -f "$config_dir/$config_file" ]]; then
-    . "$config_dir/$config_file"
-else
-    setup_config_file
-    exit
-fi
+# Source the config file. Set it up only if called by root
+[[ $UID -eq 0 ]] && \
+    if [[ -f "$config_dir/$config_file" ]]; then
+        . "$config_dir/$config_file"
+        # Search for the latest config variable in the config file. If this
+        # variable is not present, then it (hopefully) means that the
+        # config file is not the latest one
+        # Currently latest config variable is ETA_ALL
+        if ! grep -qs ETA_ALL "$config_dir/$config_file"; then
+            Err -w "Your config file $yellow$config_dir/$config_file$normal
+    needs updating.
+    To update your config file, rename the old file and rerun this script.
+    Then use your favorite diff program to merge the old and the new file.
+    "
+        fi
+    else
+        setup_config_file
+        exit
+    fi
 
 
 # Variables used in this script. Modify only if you know what you are doing
@@ -383,6 +413,7 @@ tmpT=/tmp/$self.tmpT
 : ${_SHOW_MERGE_TIME:=${SHOW_MERGE_TIME:-0}}
 : ${_PRE_CMD:=$PRE_CMD}
 : ${_POST_CMD:=$POST_CMD}
+: ${_ETA_ALL:=${ETA_ALL:-0}}
 unset DELAY MOUNT_TMPFS TMPFS_SIZE TXT_UPDATER GUI_UPDATER \
     SHOW_MERGE_TIME PRE_CMD POST_CMD
 # Other variables used in the script.
@@ -390,8 +421,9 @@ _num=0                  # The number of the package being emerged
 cmdline=""              # This will hold the arguments passed to emerge
 E_LOG="/var/log/emerge.log" # The file where emerge dumps its logs
 e_opt_ask=0             # If it is 1, then ask before emerging
+e_opt_color="--color=y" # This will be set to --color=n if so asked for
 e_opt_pretend=0         # If it is 1, then only pretend the emerge
-e_opt_resume=0          # If it is 1, then display " Resuming merge "
+e_opt_resume=""         # If it is '--resume', display " Resuming merge "
 e_opt_verbose=""        # If it is -v, then emerge -vq is launched
 eta=0                   # The total time left for the remaining packages
 exit_status=( 0 0 )     # This counts the # of failed and skipped packages
@@ -487,6 +519,14 @@ fix_edo() {
     for e in $edo; do
         case "$e" in
             -a|--ask) e_opt_ask=1;;
+            --color*)
+                    if [[ "$e" = *=n ]]; then
+                        e_opt_color="--color=n"
+                    elif [[ "${edo/--color n}" != "$edo" ]]; then
+                        e_opt_color="--color=n"
+                    fi 
+                    # Don't change the edo itself. Let it remain.
+                    new_edo="$new_edo $e";;
             --*)    new_edo="$new_edo $e";;
             -*)     if [[ "$e" =~ -[b-zA-Z0-9]*a[b-zA-Z0-9]* ]]; then
                         new_edo="$new_edo ${e/a/}"
@@ -594,7 +634,7 @@ merge_time() {
 # Usage: my_genlop [-t] category/packagename[-ver]
 my_genlop() {
     local -i cnt=0 tmp=0 tmp_sum=0 t=0
-    local line c p
+    local c line p status
     if [[ "$1" = "-t" ]]; then
         t=1
         c="${2%%/*}"
@@ -603,7 +643,15 @@ my_genlop() {
         c="${1%%/*}"
         p="${1##*/}"
     fi
-    while read line; do
+    while read line status; do
+        # Skip instances of duplicate lines. An example is sys-apps/portage
+        if [[ "$status" = "completed" && $tmp -ne 0 ]]; then
+            # There are two or more consecutive lines of "completed emerge"
+            continue
+        elif [[ "$status" = "emerged" && $tmp -eq 0 ]]; then
+            # There are two or more consecutive lines of "emerge $pkg"
+            continue
+        fi
         if [[ "$tmp" -eq 0 ]]; then
             tmp="$line"
         else
@@ -617,10 +665,10 @@ my_genlop() {
     done < <( \
         if [[ $t -eq 1 ]]; then
             tac $E_LOG | sed -n -e \
-                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1@p}"
+                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1 completed@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1 emerged@p}"
         else
             sed -n -e \
-                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1@p}" \
+                "/:::.* completed emerge .*${c}\/${p}/,/>>>.* emerge .*${c}\/${p}/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1 completed@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1 emerged@p}" \
                 "$tmpT"
         fi )
     [[ "$cnt" -gt 0 ]] && echo "$(( $tmp_sum / $cnt ))"
@@ -642,20 +690,26 @@ my_genlop_eta() {
             # total-time = eta - ( curr time - emerge start time )
             total_time="$(( $merge_eta - $( date -u '+%s' ) + $1 ))"
             if [[ "$total_time" -le 0 ]]; then
-                echo "any time now"
+                echo "any time now "
             else
                 get_time "$total_time"
             fi
         fi
     else
-        local p
+        local p ptime
         while read p; do
             [[ "$p" =~ ^\[ebuild.* ]] || continue
             p="${p#*]}"
             # Change cat/pkg-ver to cat/pkg
-            p="$( echo "$p" | sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*$/\1/' )"
-            p="$( my_genlop $p )" || p=0
-            total_time="$(( $total_time + $p ))"
+            ptime="$( echo "$p" | \
+                sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*$/\1/' )"
+            ptime="$( my_genlop $ptime )" || ptime=0
+            total_time="$(( $total_time + $ptime ))"
+            if [[ $ETA_ALL -eq 1 ]]; then
+                p="$( echo "$p" | sed -e 's/^[ ]\+\([^ ]\+\).*$/\1/' )"
+                infolr "echo -e" "    $bold$p$normal: " \
+                    "$( get_time $ptime )" 1>&2
+            fi
         done <$tmpE
         if [[ "$total_time" -eq 0 ]]; then
             echo ""
@@ -715,7 +769,7 @@ parse_cmdline() {
     # Check for -r embedded in the command
     if [[ "$cmd" =~ -[a-qs-zA-Z0-9]*r[a-qs-zA-Z0-9]* ]]; then
         cmd="${cmd/r/}"
-        e_opt_resume=1
+        e_opt_resume="--resume"
     fi
 
     # Check for -v embedded in the command
@@ -771,15 +825,35 @@ trap "set_cols" WINCH
 
 # Main program starts here.
 # Nice output
-# First parse the command line
+# Need to check for NOCOLOR in make.conf first
+if grep -qsE "NOCOLOR=([\'\"])?false([\'\"])?" \
+    /$(portageq envvar PORTAGE_CONFIGROOT)/etc/make.conf; then
+    e_opt_color="--color=n"
+fi
+# Now parse the command line
 until [[ -z "$1" ]]; do
     case "$1" in
         -a|--ask)       e_opt_ask=1;;
+        --color*)
+            if [[ "$1" = *=* ]]; then
+                if [[ "$1" = *=n ]]; then
+                    e_opt_color="--color=n"
+                elif [[ "$1" != *=y ]]; then
+                    die "Incorrect option to --color" # Some weird option
+                fi
+            else
+                if [[ "$2" = "n" ]]; then
+                    e_opt_color="--color=n"
+                elif [[ "$2" != "y" ]]; then
+                    die "Incorrect option to --color" # Some weird option
+                fi
+                shift
+            fi ;;
         -j*|--jobs)     die "-j or --jobs is not allowed. Use emerge
     directly if you want this functionality.";;
         -p|--pretend)   e_opt_pretend=1;;
         -q|--quiet)     ;;
-        -r|--resume)    e_opt_resume=1;;
+        -r|--resume)    e_opt_resume="--resume";;
         -v|--verbose)   e_opt_verbose="-v";;
         --*)            cmdline="$cmdline $1";;
         -*)             parse_cmdline "$1";;
@@ -789,6 +863,11 @@ until [[ -z "$1" ]]; do
 done
 
 
+# one final place where --ask can be hidden: EMERGE_DEFAULT_OPTS!!
+# Also check EMERGE_DEFAULT_OPTS for --color=n
+fix_edo
+
+[[ "$e_opt_color" = *=n ]] && unset ${COLORS[@]}
 set_cols            # Set the columns in the terminal
 get_num_self        # Get the number of $self processes running
 # Fix the temporary files if multiple $self are running.
@@ -798,24 +877,30 @@ get_num_self        # Get the number of $self processes running
     tmpT="$( new_tmp_file "$tmpT" )"
 }
 
-# Secure temporary file tmpE and tmpT:
+# Secure temporary file tmpE:
 secure_file $tmpE
-secure_file $tmpT
 
 # Pretend emerge. If it fails, exit. Also do some error checking.
 centered_output dash " Pretended emerge "
-emerge --color=y -p $e_opt_verbose $cmdline | tee -i $tmpE
+emerge -p $e_opt_color $e_opt_resume $e_opt_verbose $cmdline | tee -i $tmpE
 status="${PIPESTATUS[0]}"
 
 # Clean up tmpE of all colors.
 sed -i -e 's/\[[^m]*m//g' $tmpE
 
+# Secure temporary file tmpT:
+secure_file $tmpT
 # Dump the emerge.log into tmpT
 tac $E_LOG > $tmpT
 
 [[ $status -eq 0 ]] && {
-    echo
-    infor "Estimating total update time ..."
+    if [[ $ETA_ALL -eq 1 ]]; then
+        grep -qsE "^\[ebuild" $tmpE && echo 1>&2 && \
+            centered_output blank "Per-package ETA" 1>&2
+    else
+        echo
+        infor "Estimating total update time ..."
+    fi
     centered_output blank " Total ETA: $( my_genlop_eta )"
     echo
 }
@@ -825,6 +910,9 @@ tac $E_LOG > $tmpT
 
 # Check for root now
 [[ $UID -eq 0 ]] || die "root login is required to actually emerge."
+
+# Now set ETA_ALL to 0 otherwise my_genlop_eta will give tons of output
+ETA_ALL=0
 
 # Error checking
 LC_ALL="C" grep -q '^\[ebuild[ ]*I' $tmpE && \
@@ -847,9 +935,6 @@ unset status
 
 # Fix the output in tmpE -- keep only packages to be emerged.
 sed -i -e '/^\[ebuild/!d' $tmpE
-
-# one final place where --ask can be hidden: EMERGE_DEFAULT_OPTS!!
-fix_edo
 
 # --ask was provided in some form in command line.
 [[ $e_opt_ask -eq 1 ]] && {
@@ -875,11 +960,11 @@ mount_tmpfs
 [[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" 2> /dev/null )" ]] \
     && "$_PRE_CMD" || eval "$_PRE_CMD"
 # Start the actual emerge
-emerge -q $cmdline >& $TMPFILE &
+emerge -q $e_opt_resume $cmdline >& $TMPFILE &
 PID=$!
 
 echo
-if [[ $e_opt_resume -eq 1 ]]; then
+if [[ "$e_opt_resume" = "--resume" ]]; then
     centered_output dash " Resuming merge "
 else
     centered_output dash " Starting emerge "
@@ -928,9 +1013,9 @@ while ps -p $PID >& /dev/null; do
         merge_start="$( tac $E_LOG | sed -n -e \
             "/>>>.* emerge .*${pkg%%/*}\/${pkg##*/}/{s@^\([0-9]\+\):.*@\1@p;q;}" )"
 
-        # Here 12 is the max # of places that will be taken by the display
-        # of the ETA. Example: "10d 12h 14m 33s"
-        total_len=$(( $my_len + $len + 12 ))
+        # Here 15 is the max # of places that will be taken by the display
+        # of the ETA. Example: "10d 12h 14m 33s", "any time now"
+        total_len=$(( $my_len + $len + 15 ))
     fi
     if [[ "$tmp" = *Emerging* ]]; then
         if [[ $total_len -lt $cols ]]; then
