@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20110617                                       #
+        #   Version: 20110827                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,9 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 08/27/2011:   Now, easier to detect currently merging pkgs#
+        #               Bugfix: Correct <num>/<total> in term title.#
+        # 08/20/2011:   Bugfix: Detect "binary" @ emerge -K output. #
         # 06/17/2011:   Bugfix: autounmask-write@EMERGE_DEFAULT_OPTS#
         #               wasn't working properly.                    #
         #               Update the config update grep string to inc-#
@@ -335,7 +338,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20110617
+    Version: 20110827
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
@@ -505,7 +508,7 @@ determine_merge_eta() {
     local -i cnt=1
     local p ptime
     while read p; do
-        [[ "$p" =~ ^\[ebuild.* ]] || continue    
+        [[ "$p" =~ ^\[ebuild.* ]] || [[ "$p" =~ ^\[binary.* ]] || continue
         p="${p#*]}"
         # Change cat/pkg-ver to cat/pkg
         ptime="$( echo "$p" | \
@@ -842,12 +845,12 @@ parse_cmdline() {
 # Usage: pkg_failed
 pkg_failed() {
     local p
-    for p in $( sed -e 's@^\[ebuild[^]*]*\][ ]\+\([^ ]\+\).*$@\1@' \
+    for p in $( sed -r -e 's@^\[(ebuild|binary)[^]*]*\][ ]\+\([^ ]\+\).*$@\1@' \
         $tmpE ); do
         if last_pkg_failed "$p"; then
             ((exit_status++))
             sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
-            infolr info "Install  $cyan$p$normal." "${red}Error!$normal "
+            infolr info "Install  $p." "${red}Error!$normal "
         fi
     done
 }
@@ -880,7 +883,7 @@ set_cols() {
 update_failed() {
     local p
     for p in $@; do
-        infolr info "Install  $cyan$p$normal." "${red}Error!$normal "
+        infolr info "Install  $p." "${red}Error!$normal "
         ((exit_status++))
         failed_pkgs "$p"
         pkg_installing="${pkg_installing/$p}"
@@ -900,8 +903,7 @@ update_installed() {
     for p in $@; do
         if echo "$elog_tail" | \
             LC_ALL="C" grep -qs ":::.* completed emerge .*${p}"; then
-            infolr info "Install  $cyan$p$normal." \
-                "$green$( merge_time "$p" )$normal"
+            infolr info "Install  $p." "$green$( merge_time "$p" )$normal"
             pkg_installing="${pkg_installing/$p}"
             pkg_merging="${pkg_merging/$p}"
             sed -i -e "/${p%/*}\/${p#*/}/d" "$tmpE"
@@ -969,11 +971,12 @@ update_term_title() {
     [[ "$DISPLAY" ]] || return
     [[ -f $tmpE ]]   || return
 
+    local -i num_jobs="$( echo $pkg_installing $pkg_merging | wc -w )"
     # eta holds the total ETA
     eta="$( my_genlop_eta )"
     # Change the terminal title
-    echo -ne "\x1b]0;$( echo $pkg_installing $pkg_merging | wc -w ) \
-jobs, $(($_total_num - $(wc -l <$tmpE) + 1))/$_total_num, \
+    echo -ne "\x1b]0;${num_jobs} \
+jobs, $(($_total_num - $(wc -l <$tmpE) + $num_jobs))/$_total_num, \
 Total ETA: ${eta}\007"
 }
 
@@ -1055,7 +1058,7 @@ status="${PIPESTATUS[0]}"
 # Clean up tmpE of all colors
 sed -i -e 's/\[[^m]*m//g' $tmpE
 # Keep the list of all packages - used with merge_eta & merge_start
-pkg_all="$( sed -e '/^\[ebuild/!d' $tmpE )"
+pkg_all="$( sed -r -e '/^\[(ebuild|binary)/!d' $tmpE )"
 
 
 [[ $status -eq 0 || ( $status -eq 1 && "$e_opt_auto" ) ]] && {
@@ -1068,7 +1071,7 @@ pkg_all="$( sed -e '/^\[ebuild/!d' $tmpE )"
 
     echo 
     if [[ $_ETA_ALL -eq 1 ]]; then
-        grep -qsE "^\[ebuild" $tmpE && \
+        LC_ALL="C" grep -qsE "^\[(ebuild|binary)" $tmpE && \
             centered_output blank " Per-package ETA "
     else
         infor "Estimating total update time ..."
@@ -1088,7 +1091,7 @@ pkg_all="$( sed -e '/^\[ebuild/!d' $tmpE )"
 _ETA_ALL=0
 
 # Error checking
-LC_ALL="C" grep -q '^\[ebuild[ ]*I' $tmpE && \
+LC_ALL="C" grep -qE '^\[(ebuild|binary)[ ]*I' $tmpE && \
     Err -w "Some packages require user interaction. This script
     will now exit." && \
     exit_prog
@@ -1098,7 +1101,7 @@ LC_ALL="C" grep -q '^\[blocks[ ]*B' $tmpE && \
 LC_ALL="C" grep -q '^\[blocks[ ]*b' $tmpE && \
     info "Soft blocks have been identified. The emerge process will resolve
     the blocks automatically.\n"
-LC_ALL="C" grep -qE '^\[ebuild[^]]+F' $tmpE && \
+LC_ALL="C" grep -qE '^\[(ebuild|binary)[^]]+F' $tmpE && \
     Err -w "Packages with fetch restrictions have been identified. The
     emerge process will fail if the packages are not downloaded manually.
     " && sleep 2
