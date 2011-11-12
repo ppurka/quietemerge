@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091029                                       #
+        #   Version: 20091030                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,9 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 10/30/2009:   Bug fix: Remove the skipped package from tmp#
+        #               file so that the correct count and correct  #
+        #               remaining time is given by genlop           #
         # 10/29/2009:   Genuine support for --keep-going.           #
         #               Actually calculate the space required by    #
         #               genlop output.                              #
@@ -209,7 +212,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091029
+    Version: 20091030
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -495,6 +498,8 @@ while ps -p $PID >& /dev/null; do
         if [[ -n "$pkg" ]]; then
             if grep -q "Failed to emerge.*$pkg" $TMPFILE; then
                 # An error occured :-S
+                # Delete package from tmpE so that count is correct.
+                sed -i -e "/${pkg%%/*}\/${pkg##*/}/d" $tmpE
                 blen=$(( $cols - $my_len - 2 - $len ))
                 info "Install  $cyan$pkg$normal.${BLANK:1:$blen}\
 ${red}Error!$normal "
@@ -504,7 +509,12 @@ ${red}Error!$normal "
                 # This expression relies on the fact that emerge will not
                 # fail on still another package within $DELAY seconds. So,
                 # it searches for all --keep-going till the end of the file
-                sed -n -e "/Failed.*${pkg%%\/*}\/${pkg##*\/}/,\$s/.*emerge --keep-going: \([^ ]*\) dropped.*/  $pink* Skipped  \1$normal due to --keep-going/p" $TMPFILE
+                # sed -n -e "/Failed.*${pkg%%\/*}\/${pkg##*\/}/,\$s/.*emerge --keep-going: \([^ ]*\) dropped.*/  $pink* Skipped  \1$normal due to --keep-going/p" $TMPFILE
+                for p in $( sed -n -e "/Failed.*${pkg%%\/*}\/${pkg##*\/}/,\$s/.*emerge --keep-going: \([^ ]*\) dropped.*/\1/p" $TMPFILE ); do
+                    # Delete packages from tmpE so that count is correct.
+                    sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
+                    echo -e "$pink  * Skipped  $p$normal due to --keep-going"
+                done
             else
                 sed -i -e "/${pkg%%\/*}\/${pkg##*\/}/d" $tmpE
                 # This needs 1 more character than my_len
@@ -569,6 +579,7 @@ if LC_ALL="C" grep -qi "error.*$pkg fail" $TMPFILE || \
     # MASSIVE!!  This expression relies on the fact that emerge will not
     # fail on still another package within $DELAY seconds. So, it searches
     # for all --keep-going till the end of the file
+    # Now, emerge has already finished. So I don't need to edit tmpE
     sed -n -e "/Failed.*${pkg%%\/*}\/${pkg##*\/}/,\$s/.*emerge --keep-going: \([^ ]*\) dropped.*/  $pink* Skipped  \1$normal due to --keep-going/p" $TMPFILE
     # Some error happened -- we will not use exit_prog; tmpfs data will
     # remain preserved then.
