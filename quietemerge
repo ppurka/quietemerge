@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20091030                                       #
+        #   Version: 20091102                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,12 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/02/2009:   Determine the PORTAGE_TMPDIR by portageq,and#
+        #               mount tmpfs on to PORTAGE_TMPDIR/portage    #
+        #               Added a new config option: SHOW_MERGE_TIME  #
+        #               if it is 1, then time required to merge will#
+        #               be shown instead of "Done!"                 #
+        #               Bug fix: let us be less exacting on genlop. #
         # 10/30/2009:   Bug fix: Remove the skipped package from tmp#
         #               file so that the correct count and correct  #
         #               remaining time is given by genlop           #
@@ -197,6 +203,10 @@ setup_config_file() {
 # Examples are cfg-update, etc-proposals.
 # Default is TXT_UPDATER
 # GUI_UPDATER="\$TXT_UPDATER"
+# 
+# Whether we should display the latest merge time instead of "Done!" after
+# a package has been emerged. Default is 0 (no). Set it to 1 to enable it.
+# SHOW_MERGE_TIME=0
 
 END
 
@@ -212,7 +222,7 @@ help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
     It uses app-portage/genlop to provide an estimate of the time left.
-    Version: 20091030
+    Version: 20091102
     "
     info "License: GPL-3
     Copyright (C) 2009  ppurka _at_ gmail _dot_ com
@@ -281,8 +291,9 @@ fi
 # Variables used in this script. Modify only if you know what you are doing
 TMPFILE=/tmp/output.log
 tmpE=/tmp/tmpE.$UID
-: ${MOUNT_TMPFS:=0}
 : ${DELAY:=5}
+: ${MOUNT_TMPFS:=0}
+: ${SHOW_MERGE_TIME:=0}
 _num=0                  # The number of the package being emerged.
 cmdline=""              # This will hold the arguments passed to emerge
 e_opt_ask=0             # If it is 1, then ask before emerging
@@ -298,21 +309,23 @@ pkg=""                  # This holds the name of current pkg being emerged
 # Mounting and unmounting tmpfs. These fns take no argument #{{{
 mount_tmpfs() {
     [[ $MOUNT_TMPFS -ne 1 ]] && return 0
-    if mount | grep -q -s -w "tmpfs on /var/tmp/portage"; then
+    local var_tmp="$(portageq envvar PORTAGE_TMPDIR)/portage"
+    if mount | grep -q -s -w "tmpfs on $var_tmp"; then
         info "tmpfs is already mounted\n"
     elif [[ "$TMPFS_SIZE" ]]; then
-        mount -t tmpfs -o size=${TMPFS_SIZE} tmpfs /var/tmp/portage
+        mount -t tmpfs -o size=${TMPFS_SIZE} tmpfs $var_tmp
     else
-        mount -t tmpfs tmpfs /var/tmp/portage
+        mount -t tmpfs tmpfs $var_tmp
     fi
     [[ $? -ne 0 ]] && die "Error in mounting tmpfs\n"
 }
 unmount_tmpfs() {
     # Do not mess with tmpfs mounted without this script
     [[ $MOUNT_TMPFS -ne 1 ]] && return 0
+    local var_tmp="$(portageq envvar PORTAGE_TMPDIR)/portage"
     if [[ $UID -eq 0 ]] && mount | \
-        grep -q -s -w "tmpfs on /var/tmp/portage"; then
-        umount /var/tmp/portage
+        grep -q -s -w "tmpfs on $var_tmp"; then
+        umount $var_tmp
     fi
     [[ $? -ne 0 ]] && die "Error in unmounting tmpfs\n"
 } 
@@ -517,10 +530,20 @@ ${red}Error!$normal "
                 done
             else
                 sed -i -e "/${pkg%%\/*}\/${pkg##*\/}/d" $tmpE
-                # This needs 1 more character than my_len
-                blen=$(( $cols - $my_len - 1 - $len ))
-                info "Install  $cyan$pkg$normal.${BLANK:1:$blen}\
+                if [[ $SHOW_MERGE_TIME -eq 1 ]]; then
+                    tmp1="$( genlop -nt --date 3 minute ago "=$pkg" | \
+                        sed -n -e 's/.*merge time: \(.*\)$/\1/p' )"
+                    # We need +4 because "ETA:" is gone.
+                    blen=$(( $cols - $my_len + 4 - ${#tmp1} - $len ))
+                    [[ $blen -lt 1 ]] && blen=1
+                    info "Install  $cyan$pkg$normal.${BLANK:1:$blen}\
+$green$tmp1$normal"
+                else
+                    # This needs 1 more character than my_len
+                    blen=$(( $cols - $my_len - 1 - $len ))
+                    info "Install  $cyan$pkg$normal.${BLANK:1:$blen}\
 ${green}Done!$normal "
+                fi
             fi
         fi
         pkg="$pkg_tmp"
@@ -598,9 +621,20 @@ else
     # Looks like everything went fine :-/
     # Bug fix: check that $len is actually non-empty.
     if [[ "$len" ]]; then
-        # This needs one more character than my_len
-        blen=$(( $cols - $my_len - 1 - $len ))
-        info "Install  $cyan$pkg$normal.${BLANK:1:$blen}${green}Done!$normal "
+        if [[ $SHOW_MERGE_TIME -eq 1 ]]; then
+            tmp1="$( genlop -nt --date 3 minute ago "=$pkg" | \
+                sed -n -e 's/.*merge time: \(.*\)$/\1/p' )"
+            # We need +4 because "ETA:" is gone.
+            blen=$(( $cols - $my_len + 4 - ${#tmp1} - $len ))
+            [[ $blen -lt 1 ]] && blen=1
+            info "Install  $cyan$pkg$normal.${BLANK:1:$blen}\
+$green$tmp1$normal"
+        else
+            # This needs 1 more character than my_len
+            blen=$(( $cols - $my_len - 1 - $len ))
+            info "Install  $cyan$pkg$normal.${BLANK:1:$blen}\
+${green}Done!$normal "
+        fi
     fi
     # The emerge process is over. Now check for preserved rebuild notice
     tail $TMPFILE | LC_ALL="C" grep -qi "preserved" && \
