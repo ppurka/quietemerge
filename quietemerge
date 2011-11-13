@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20110827                                       #
+        #   Version: 20111113                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/13/2011:   --quiet-build is the default. Remove -q.    #
         # 08/27/2011:   Now, easier to detect currently merging pkgs#
         #               Bugfix: Correct <num>/<total> in term title.#
         # 08/20/2011:   Bugfix: Detect "binary" @ emerge -K output. #
@@ -338,7 +339,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20110827
+    Version: 20111113
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
@@ -1093,8 +1094,10 @@ _ETA_ALL=0
 # Error checking
 LC_ALL="C" grep -qE '^\[(ebuild|binary)[ ]*I' $tmpE && \
     Err -w "Some packages require user interaction. This script
-    will now exit." && \
-    exit_prog
+    will now exit.
+    If you want to emerge all packages other than interactive packages give
+    the argument ${cyan}--accept-properties=-interative$normal to emerge." \
+    && exit_prog
 LC_ALL="C" grep -q '^\[blocks[ ]*B' $tmpE && \
     Err "Hard blocks have been identified. This script will now exit." && \
     exit_prog $status
