@@ -1096,7 +1096,7 @@ LC_ALL="C" grep -qE '^\[(ebuild|binary)[ ]*I' $tmpE && \
     Err -w "Some packages require user interaction. This script
     will now exit.
     If you want to emerge all packages other than interactive packages give
-    the argument ${cyan}--accept-properties=-interative$normal to emerge." \
+    the argument ${cyan}--accept-properties=-interactive$normal to emerge." \
     && exit_prog
 LC_ALL="C" grep -q '^\[blocks[ ]*B' $tmpE && \
     Err "Hard blocks have been identified. This script will now exit." && \
