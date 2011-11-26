@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/26/2011:   Provide info before running pre/post command#
         # 11/13/2011:   --quiet-build is the default. Remove -q.    #
         # 08/27/2011:   Now, easier to detect currently merging pkgs#
         #               Bugfix: Correct <num>/<total> in term title.#
@@ -540,6 +541,7 @@ exit_prog() {
     fi
 
     # Post command after everything is over.
+    [[ "$_POST_CMD" ]] && info "Executing post-command: $_POST_CMD"
     [[ "$_POST_CMD" && -x "$( which "$_POST_CMD" 2> /dev/null )" ]] \
         && "$_POST_CMD" || eval "$_POST_CMD"
 
@@ -1142,6 +1144,7 @@ _total_num=$(wc -l <$tmpE)
 # Mount the tmpfs if asked for
 mount_tmpfs
 # Pre-command just before the emerge starts running.
+[[ "$_PRE_CMD" ]] && info "Executing pre-command: $_PRE_CMD"
 [[ "$_PRE_CMD" && -x "$( which "$_PRE_CMD" 2> /dev/null )" ]] \
     && "$_PRE_CMD" || eval "$_PRE_CMD"
 # Export notitles FEATURE so that I can remove my own code
