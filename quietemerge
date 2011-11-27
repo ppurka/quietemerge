@@ -223,11 +223,12 @@ infor() {
 }
 
 # Print out error information.
-# Usage: Err "Whatever you want to print"
+# Usage: Err "For printing errors"
+# Usage: Err -w "For printing warnings"
 Err(){
     local color="$red" msg="ERROR"
-    [[ "$1" = "-w" ]] && color="$pink" && msg="WARNING"
-    echo -e "  $color*$normal [$color $msg!!$normal ] ${@/-w/}" >&2
+    [[ "$1" = "-w" ]] && color="$pink" && msg="WARNING" && shift
+    echo -e "  $color*$normal [$color $msg!!$normal ] ${@}" >&2
 }
 
 die() {
