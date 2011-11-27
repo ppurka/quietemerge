@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20111113                                       #
+        #   Version: 20111127                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/27/2011:   Provide total ETA without 'binary' emerges. #
         # 11/26/2011:   Provide info before running pre/post command#
         # 11/13/2011:   --quiet-build is the default. Remove -q.    #
         # 08/27/2011:   Now, easier to detect currently merging pkgs#
@@ -341,7 +342,7 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20111113
+    Version: 20111127
     "
     info "License: GPL-3
     Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
