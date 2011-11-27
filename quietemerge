@@ -527,6 +527,17 @@ determine_merge_eta() {
     done <$tmpE
 }
 
+# Usage: determine_merge_eta_no_binary
+determine_merge_eta_no_binary() {
+    local -i eta_no_bin=${merge_eta[0]} cnt=1
+    while read p; do
+        [[ "$p" =~ ^\[ebuild.* ]] || [[ "$p" =~ ^\[binary.* ]] || continue
+        [[ "$p" =~ ^\[binary.* ]] && (( eta_no_bin -= merge_eta[$cnt] ))
+        ((cnt++))
+    done <$tmpE
+    echo $eta_no_bin
+}
+
 # Usage: exit_prog [<exit status>]
 exit_prog() {
     [[ -f "$tmpE" ]] && rm -f $tmpE
@@ -1082,6 +1093,11 @@ pkg_all="$( sed -r -e '/^\[(ebuild|binary)/!d' $tmpE )"
     fi
     determine_merge_eta
     centered_output blank " Total ETA: $( get_time ${merge_eta[0]} )"
+    if LC_ALL="C" grep -m1 -qsE "^\[binary " $tmpE; then
+        infor "Estimating update time without ${pink}binary$normal emerges ..."
+        centered_output blank " Total ETA without ${pink}binary$normal: $(\
+            get_time $( determine_merge_eta_no_binary ) )"
+    fi
     echo
 }
 
