@@ -530,11 +530,11 @@ determine_merge_eta() {
 
 # Usage: determine_merge_eta_no_binary
 determine_merge_eta_no_binary() {
-    local -i eta_no_bin=${merge_eta[0]} cnt=1
+    local -i eta_no_bin=${merge_eta[0]} cnt=0
     while read p; do
+        ((cnt++))
         [[ "$p" =~ ^\[ebuild.* ]] || [[ "$p" =~ ^\[binary.* ]] || continue
         [[ "$p" =~ ^\[binary.* ]] && (( eta_no_bin -= merge_eta[$cnt] ))
-        ((cnt++))
     done <$tmpE
     echo $eta_no_bin
 }
