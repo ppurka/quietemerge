@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/05/2011:   Bugfix: Get rid of "grep: Unmatched [ or [^"#
         # 11/27/2011:   Provide total ETA without 'binary' emerges. #
         # 11/26/2011:   Provide info before running pre/post command#
         # 11/13/2011:   --quiet-build is the default. Remove -q.    #
@@ -861,14 +862,15 @@ parse_cmdline() {
 # Usage: pkg_failed
 pkg_failed() {
     local p
-    for p in $( sed -r -e 's@^\[(ebuild|binary)[^]*]*\][ ]\+\([^ ]\+\).*$@\1@' \
-        $tmpE ); do
+    while read p; do
+        p="${p#*]}"
+        p="$( echo "$p" | sed -e 's/^[ ]\+\([^ ]\+\).*$/\1/' )"
         if last_pkg_failed "$p"; then
             ((exit_status++))
             sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
             infolr info "Install  $p." "${red}Error!$normal "
         fi
-    done
+    done <$tmpE
 }
 
 
