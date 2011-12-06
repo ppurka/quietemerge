@@ -863,8 +863,7 @@ parse_cmdline() {
 pkg_failed() {
     local p
     while read p; do
-        p="${p#*]}"
-        p="$( echo "$p" | sed -e 's/^[ ]\+\([^ ]\+\).*$/\1/' )"
+        p="$( echo "${p#*]}" | sed -e 's/^[ ]\+\([^ ]\+\).*$/\1/' )"
         if last_pkg_failed "$p"; then
             ((exit_status++))
             sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
