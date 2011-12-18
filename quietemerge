@@ -22,7 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
-        # 18/05/2011:   Bugfix: Force --color=n on actual emerge.   #
+        # 12/18/2011:   Bugfix: Force --color=n on actual emerge.   #
         #               Clean up help() function.                   #
         # 12/05/2011:   Bugfix: Get rid of "grep: Unmatched [ or [^"#
         # 11/27/2011:   Provide total ETA without 'binary' emerges. #
