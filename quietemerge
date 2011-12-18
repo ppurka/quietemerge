@@ -23,6 +23,7 @@
         #---------------------  Changelog  -------------------------#
         #                                                           #
         # 18/05/2011:   Bugfix: Force --color=n on actual emerge.   #
+        #               Clean up help() function.                   #
         # 12/05/2011:   Bugfix: Get rid of "grep: Unmatched [ or [^"#
         # 11/27/2011:   Provide total ETA without 'binary' emerges. #
         # 11/26/2011:   Provide info before running pre/post command#
@@ -344,10 +345,10 @@ info "Open $yellow$config_dir/$config_file$normal and modify the settings
 help() {
     echo -e "\n $yellow $self:$normal"
     info "This program is used to perform the emerge with pretty output.
-    Version: 20111127
+    Version: $( sed -n -e '5s/^.*:[ ]\+\([0-9]\+\) .*$/\1/p' "$0" )
     "
     info "License: GPL-3
-    Copyright (C) 2009 - 2011  ppurka _at_ gmail _dot_ com
+    Copyright (C) 2009 - 2011  P. Purkayastha (ppurka _at_ gmail _dot_ com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -368,7 +369,6 @@ help() {
     -h | --help     Show this help text
 
     All other options are passed directly to emerge.
-    Additionally, the option -q is provided to emerge by default.
     If no arguments are provided to $self, then this help text is shown.
     "
     info "The following options of emerge should not be provided to this
@@ -378,22 +378,25 @@ help() {
     There may also be other options of emerge which break this script.
     "
 
-    info "Configuration:
-    Some basic configuration related to this script is stored in
-    $yellow$config_dir/$config_file$normal
-    "
     info "Examples on how to call this script:
     $self -1 glibc vim
     $self --resume
     $self -auDvN --jobs=3 --load-average=4 --keep-going world
     "
-    info "In order to temporarily override the settings present in the
+    # No configuration file is created for non-root. So, don't show this.
+    [[ $UID -eq 0 ]] && \
+        info "Configuration:
+    Some basic configuration related to this script is stored in
+    $yellow$config_dir/$config_file$normal
+        " && \
+        info "In order to temporarily override the settings present in the
     config file, prepend the variable with an underscore _ and provide it
     as an environment variable.
     An example where I want to override the config file setting
     temporarily, and/or provide a temporary setting:
     _DELAY=2 _MOUNT_TMPFS=1 $self -a eselect
-    "
+        "
+    exit 0
 }
 # }}}
 
@@ -405,7 +408,6 @@ if [[ -z "$@" && "$DISPLAY" ]] && ! tty -s; then
     exec xterm -hold -e "$(dirname "$0")/$(basename "$0")" -h
 elif [[ -z "$@" || "$@" = -h* || "$@" = --h* ]]; then
     help
-    exit
 fi
 
 # Source the config file. Set it up only if called by root
