@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 18/05/2011:   Bugfix: Force --color=n on actual emerge.   #
         # 12/05/2011:   Bugfix: Get rid of "grep: Unmatched [ or [^"#
         # 11/27/2011:   Provide total ETA without 'binary' emerges. #
         # 11/26/2011:   Provide info before running pre/post command#
