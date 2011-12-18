@@ -384,17 +384,24 @@ help() {
     $self -auDvN --jobs=3 --load-average=4 --keep-going world
     "
     # No configuration file is created for non-root. So, don't show this.
-    [[ $UID -eq 0 ]] && \
+    [[ $UID -eq 0 ]] && {
         info "Configuration:
     Some basic configuration related to this script is stored in
     $yellow$config_dir/$config_file$normal
-        " && \
+        "
         info "In order to temporarily override the settings present in the
     config file, prepend the variable with an underscore _ and provide it
     as an environment variable.
     An example where I want to override the config file setting
     temporarily, and/or provide a temporary setting:
     _DELAY=2 _MOUNT_TMPFS=1 $self -a eselect
+        "
+    } || \
+        info "You can set the environment variable ${bold}_ETA_ALL=1$normal
+    to get the estimated time of emerge for each individual package.
+
+    Note: This script creates a config file in the home directory (of root)
+    only when run as root.
         "
     exit 0
 }
