@@ -22,6 +22,8 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/24/2011:   Give pkg name in term title if # jobs is 1. #
+        #               Execute emerge directly on unsupported args.#
         # 12/18/2011:   Bugfix: Force --color=n on actual emerge.   #
         #               Clean up help() function.                   #
         # 12/05/2011:   Bugfix: Get rid of "grep: Unmatched [ or [^"#
@@ -371,13 +373,15 @@ help() {
     All other options are passed directly to emerge.
     If no arguments are provided to $self, then this help text is shown.
     "
-    info "The following options of emerge should not be provided to this
-    script. ${red}No error checks are performed to see if the options
-    passed to the script adhere to these suggestions.$normal
-    --sync, -C, -c
-    There may also be other options of emerge which break this script.
+    info "If any arguments that are unsupported by this script is detected
+    then the script will execute emerge directly, bypassing all the setup
+    in the rest of the script.
+    A few examples of such unsupported arguments are:
+    ${red}--changelog, --depclean, --search, --sync, --unmerge$normal, etc.
+    See the function ${bold}has_unsupported_arg$normal in line $( sed -n \
+    '/^has_unsupported_arg()/=' "$0" ) of $self
+    for examples of more unsupported arguments.
     "
-
     info "Examples on how to call this script:
     $self -1 glibc vim
     $self --resume
