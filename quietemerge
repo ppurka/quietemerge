@@ -1002,9 +1002,17 @@ update_term_title() {
     # eta holds the total ETA
     eta="$( my_genlop_eta )"
     # Change the terminal title
-    echo -ne "\x1b]0;${num_jobs} \
+    if [[ $num_jobs -eq 1 ]]; then
+        local p="$( echo $pkg_installing$pkg_merging | \
+            sed -e 's/^[^/]\+\///' -e 's/-[0-9]\+.*//' )"
+        echo -ne "\x1b]0;${p} \
+, $(($_total_num - $(wc -l <$tmpE) + $num_jobs))/$_total_num, \
+Total ETA: ${eta}\007"
+    else
+        echo -ne "\x1b]0;${num_jobs} \
 jobs, $(($_total_num - $(wc -l <$tmpE) + $num_jobs))/$_total_num, \
 Total ETA: ${eta}\007"
+    fi
 }
 
 # End. Fns specific to script }}}
