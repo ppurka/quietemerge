@@ -1029,6 +1029,14 @@ Total ETA: ${eta}\007"
 # End. Fns specific to script }}}
 
 
+# First, check if any unsupported argument was passed. If passed, then
+# execute emerge directly, bypassing $self.
+if has_unsupported_arg "$@"; then
+    Err -w "Some argument(s) passed to this script are not supported.
+    Executing emerge directly."
+    exec emerge $@
+    exit        # Not needed actually. But keep it for kicks.
+fi
 
 # Try to exit gracefully.
 trap "exit_prog 1" 1 2 5 15
@@ -1040,13 +1048,6 @@ trap "set_cols" WINCH
 if grep -qsE "NOCOLOR=([\'\"])?false([\'\"])?" \
     /$(portageq envvar PORTAGE_CONFIGROOT)/etc/make.conf; then
     e_opt_color="--color=n"
-fi
-
-if has_unsupported_arg "$@"; then
-    Err -w "Some argument(s) passed to this script are not supported.
-    Executing emerge directly."
-    exec emerge $@
-    exit
 fi
 
 # Now parse the command line
