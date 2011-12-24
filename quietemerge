@@ -671,6 +671,24 @@ go_up() {
     done
 }
 
+# Usage: has_unsupported_arg <arguments>
+has_unsupported_arg() {
+    local arg
+    for arg in $@; do
+        case "$arg" in
+            --check-news|--*clean|--config|--deselect)         return 0 ;;
+            --list-sets|--metadata|--prune|--regen|--search*)  return 0 ;;
+            --sync|--unmerge|--version|--changelog|--columns)  return 0 ;;
+            --fetch*|-c|-C|-P|-s|-S|-l|-f|-F)                  return 0 ;;
+            --*) ;; # The other --* commands should be just fine
+            -*)  has_unsupported_arg $( echo "${arg/-}" | \
+                    sed -e 's/\(.\)/ -\1/g' ) &&               return 0 ;;
+            *)   ;; # These must be package names
+        esac
+    done
+    return 1    # Good! No unsupported argument has been found!
+}
+
 # This is used to print on the left and right with blanks in between
 # Usage: infolr <info|infor> "left aligned text" "right aligned text"
 infolr() {
@@ -1022,6 +1040,14 @@ if grep -qsE "NOCOLOR=([\'\"])?false([\'\"])?" \
     /$(portageq envvar PORTAGE_CONFIGROOT)/etc/make.conf; then
     e_opt_color="--color=n"
 fi
+
+if has_unsupported_arg "$@"; then
+    Err -w "Some argument(s) passed to this script are not supported.
+    Executing emerge directly."
+    exec emerge $@
+    exit
+fi
+
 # Now parse the command line
 until [[ -z "$1" ]]; do
     case "$1" in
