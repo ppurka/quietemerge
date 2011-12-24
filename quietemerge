@@ -1044,7 +1044,7 @@ Total ETA: ${eta}\007"
 # First, check if any unsupported argument was passed. If passed, then
 # execute emerge directly, bypassing $self.
 if has_unsupported_arg "$@"; then
-    Err -w "Some argument(s) passed to this script are not supported.
+    Err -w "Some argument(s) passed to $self are not supported.
     Executing emerge directly."
     exec emerge $@
     exit        # Not needed actually. But keep it for kicks.
