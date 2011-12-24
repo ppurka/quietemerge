@@ -680,10 +680,11 @@ has_unsupported_arg() {
             --list-sets|--metadata|--prune|--regen|--search*)  return 0 ;;
             --sync|--unmerge|--version|--changelog|--columns)  return 0 ;;
             --fetch*|-c|-C|-P|-s|-S|-l|-f|-F)                  return 0 ;;
-            --*) ;; # The other --* commands should be just fine
+            --*)    ;; # The other --* commands should be just fine
+            -[a-z]) ;; # The other single letter args are fine
             -*)  has_unsupported_arg $( echo "${arg/-}" | \
                     sed -e 's/\(.\)/ -\1/g' ) &&               return 0 ;;
-            *)   ;; # These must be package names
+            *)      ;; # These must be package names
         esac
     done
     return 1    # Good! No unsupported argument has been found!
