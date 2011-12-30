@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20111224                                       #
+        #   Version: 20111230                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/30/2011:   Bugfix: Avoid infinite recursion.           #
         # 12/24/2011:   Give pkg name in term title if # jobs is 1. #
         #               Execute emerge directly on unsupported args.#
         # 12/18/2011:   Bugfix: Force --color=n on actual emerge.   #
@@ -685,7 +686,7 @@ has_unsupported_arg() {
             --sync|--unmerge|--version|--changelog|--columns)  return 0 ;;
             --fetch*|-c|-C|-P|-s|-S|-l|-f|-F)                  return 0 ;;
             --*)    ;; # The other --* commands should be just fine
-            -[a-z]) ;; # The other single letter args are fine
+            -[0-9a-zA-Z]) ;; # The other single letter args are fine
             -*)  has_unsupported_arg $( echo "${arg/-}" | \
                     sed -e 's/\(.\)/ -\1/g' ) &&               return 0 ;;
             *)      ;; # These must be package names
