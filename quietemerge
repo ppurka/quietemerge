@@ -1222,7 +1222,7 @@ export FEATURES="${FEATURES} notitles"
 # Secure temporary files TMPFILE
 secure_file $TMPFILE
 # Start the actual emerge
-emerge $e_opt_auto $e_opt_resume --color=n $cmdline >& $TMPFILE &
+emerge -q $e_opt_auto $e_opt_resume --color=n $cmdline >& $TMPFILE &
 PID=$!
 # Store the emerge start time
 merge_eta[0]=$( date -u '+%s' )
