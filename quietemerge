@@ -582,23 +582,6 @@ exit_prog() {
     exit $@
 }
 
-# Usage: failed_pkgs <pkg_name>
-failed_pkgs() {
-    local p
-    # This expression is MASSIVE!!
-    # This expression relies on the fact that packages which are skipped
-    # because some package failed will be output in consecutive lines. So,
-    # it searches for all --keep-going till the next 'Emerging/Installing'
-    # This way if there are multiple failed packages then it will be clear
-    # which packages have been skipped because of this failed one.
-    for p in $( sed -n -e "/Failed.*${1%%/*}\/${1##*/}/,/(Emerging|Installing)/{s@.*emerge --keep-going: \([^ ]*\) dropped.*@\1@p}" $TMPFILE ); do
-        # Delete packages from tmpE so that count is correct.
-        sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
-        ((exit_status[1]++))
-        echo -e "$pink  * Skipped  $p$normal due to --keep-going"
-    done
-}
-
 # check EMERGE_DEFAULT_OPTS for --ask. This function checks for -a or --ask
 # and removes it if it is present.
 # Usage: fix_edo 
@@ -937,7 +920,6 @@ update_failed() {
     for p in $@; do
         infolr info "Install  $p." "${red}Error!$normal "
         ((exit_status++))
-        failed_pkgs "$p"
         pkg_installing="${pkg_installing/$p}"
         pkg_merging="${pkg_merging/$p}"
         sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
@@ -1014,6 +996,19 @@ update_merging() {
         else
             info "Emerging $cyan$p$normal.$cl"
         fi
+    done
+}
+
+# Usage: update_skipped <packages>
+# These packages are never put into pkg_installing or pkg_merging so we
+# don't have to remove them from those variables.
+update_skipped() {
+    local p
+    for p in $@; do
+        # Delete packages from tmpE so that count is correct.
+        sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
+        ((exit_status[1]++))
+        infolr info "Skipped  $p (keep-going)." "${pink}Skip!$normal"
     done
 }
 
@@ -1256,6 +1251,7 @@ while ps -p $PID >& /dev/null; do
     # update_installed:     modify  pkg_installing  pkg_merging tmpE
     # update_installing:    modify                  pkg_merging
     # update_merging:       modify                  pkg_merging
+    # update_skipped:       modify                              tmpE
     # update_merging must also check tmpE and pkg_installing to see pkg is
     # still present and is not already installing. This is to consider case
     # when the pkg has 'Emerging' and 'Installing' within $DELAY seconds,-
@@ -1276,6 +1272,10 @@ while ps -p $PID >& /dev/null; do
         tmp="$( echo "$newlines" | sed -n -e \
           '/Failed /{s@.*Failed .*[ ]\+\([^ /]*\)/\([^, ]*\)[, ].*$@\1/\2@p}' )"
         update_failed       ${tmp}
+        # Update the packages which were skipped
+        tmp="$( echo "$newlines" | sed -n -e \
+            '/emerge --keep-going:/{s@.*: \([^ ]*\) dropped.*@\1@p}' )"
+        update_skipped      ${tmp}
         # Now the packages which are still freaking installing
         update_installing   ${pkg_installing}
         # Now the packages which are still merging
@@ -1301,6 +1301,9 @@ update_installed    ${pkg_installing} ${tmp}
 tmp="$( echo "$newlines" | sed -n -e \
     '/Failed /{s@.*Failed .*[ ]\+\([^ /]*\)/\([^, ]*\)[, ].*$@\1/\2@p}' )"
 update_failed       ${tmp}
+tmp="$( echo "$newlines" | sed -n -e \
+    '/emerge --keep-going:/{s@.*: \([^ ]*\) dropped.*@\1@p}' )"
+update_skipped      ${tmp}
 # Now check what is the status of the packages left in $tmpE
 # We don't need to bother with pkg_installing and pkg_merging anymore
 pkg_failed
