@@ -1008,7 +1008,7 @@ update_skipped() {
         # Delete packages from tmpE so that count is correct.
         sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
         ((exit_status[1]++))
-        infolr info "Skipped  $p (keep-going)." "${pink}Skip!$normal"
+        infolr info "Skipped  $p (keep-going)." "${pink}Skip!$normal "
     done
 }
 
