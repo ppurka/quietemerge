@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20120115                                       #
+        #   Version: 20120406                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,10 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 04/06/2012:   Bugfix: Often term titlebar showed that more#
+        #               jobs were running than the actual number.   #
+        # 01/22/2012:   Bugfix: Sometimes skipped pkgs weren't being#
+        #               detected. This was quite hard to reproduce. #
         # 01/15/2012:   Bugfix: Reintroduce -q. Don't remove it ever#
         # 12/30/2011:   Bugfix: Avoid infinite recursion.           #
         # 12/24/2011:   Give pkg name in term title if # jobs is 1. #
@@ -931,6 +935,7 @@ update_failed() {
 update_installed() {
     local elog_tail="$( sed -n -e "${num_line_elog},\$p" $E_LOG )"
     local p
+    local -i _status=1  # Set to 0 if pkg_installing is modified
     # for each package,
     #   if emerge is complete then remove package from pkg_* and tmpE,
     #   else if it is not in pkg_installing then add it
@@ -941,10 +946,13 @@ update_installed() {
             pkg_installing="${pkg_installing/$p}"
             pkg_merging="${pkg_merging/$p}"
             sed -i -e "/${p%/*}\/${p#*/}/d" "$tmpE"
+            _status=0
         elif [[ "${pkg_installing}" != *$p* ]]; then
             pkg_installing="${pkg_installing} $p"
+            _status=0
         fi
     done
+    return $_status
 }
 
 # This should modify pkg_merging
@@ -1259,7 +1267,8 @@ while ps -p $PID >& /dev/null; do
     # the 'Emerging' stage.
     if [[ -z "$newlines" ]]; then
         # no additional lines of output from emerge
-        update_installed    ${pkg_installing}
+        # But we need to update the terminal title if some pkg is installed
+        update_installed    ${pkg_installing} && update_term_title
         update_installing   ${pkg_installing}
         update_merging      ${pkg_merging}
     else
