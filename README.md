@@ -111,9 +111,9 @@ and some package failed to emerge. So, something like the following can be
 used if you want to run a custom command only if the emerge process has
 succeeded:
 
-    ```
+```
     POST_CMD='if [[ $exit_status -eq 0 ]]; then my_custom_post_command; else echo some packages failed; fi'
-    ```
+```
 
 Note that it is enclosed in single quotes so that `$exit_status` doesn't get
 evaluated. Otherwise you will get an error. `$exit_status` will get evaluated
