@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20120413                                       #
+        #   Version: 20130427                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,8 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 04/27/2013:   Bugfix: Location of make.conf has changed.  #
+        #               Bugfix: NOCOLOR was working in reverse.     #
         # 04/13/2012:   Update to new message @ autounmask-write    #
         # 04/06/2012:   Bugfix: Often term titlebar showed that more#
         #               jobs were running than the actual number.   #
@@ -1063,8 +1065,8 @@ trap "set_cols" WINCH
 # Main program starts here.
 # Nice output
 # Need to check for NOCOLOR in make.conf first
-if grep -qsE "NOCOLOR=([\'\"])?false([\'\"])?" \
-    /$(portageq envvar PORTAGE_CONFIGROOT)/etc/make.conf; then
+if grep -qsE "NOCOLOR=([\'\"])?true([\'\"])?" \
+    /$(portageq envvar PORTAGE_CONFIGROOT)/etc/{,portage/}make.conf; then
     e_opt_color="--color=n"
 fi
 
