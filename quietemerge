@@ -7,7 +7,7 @@
         #-----------------------------------------------------------#
 
         #--------------------- License: GPL-3  ---------------------#
-        # Copyright (C) 2009 - 2012  ppurka _at_ gmail _dot_ com    #
+        # Copyright (C) 2009 - 2013  ppurka _at_ gmail _dot_ com    #
         # This program comes with ABSOLUTELY NO WARRANTY;           #
         # This is free software, and you are welcome to redistribute#
         # it under certain conditions;                              #
@@ -359,7 +359,7 @@ help() {
     Version: $( sed -n -e '5s/^.*:[ ]\+\([0-9]\+\) .*$/\1/p' "$0" )
     "
     info "License: GPL-3
-    Copyright (C) 2009 - 2012  P. Purkayastha (ppurka _at_ gmail _dot_ com)
+    Copyright (C) 2009 - 2013  P. Purkayastha (ppurka _at_ gmail _dot_ com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
