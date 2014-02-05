@@ -732,7 +732,7 @@ merge_time() {
     if [[ $_SHOW_MERGE_TIME -eq 1 ]]; then
         get_time "$( my_genlop -t "$1" )"
     else
-        echo "Done! "
+        echo "${green}Done! $normal"
     fi
 }
 
@@ -945,7 +945,7 @@ update_installed() {
     for p in $@; do
         if echo "$elog_tail" | \
             LC_ALL="C" grep -qs ":::.* completed emerge .*${p}"; then
-            infolr info "Install  $p." "$green$( merge_time "$p" )$normal"
+            infolr info "Install  $p." "$( merge_time "$p" )"
             pkg_installing="${pkg_installing/$p}"
             pkg_merging="${pkg_merging/$p}"
             sed -i -e "/${p%/*}\/${p#*/}/d" "$tmpE"
