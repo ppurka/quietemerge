@@ -2,12 +2,12 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20130427                                       #
+        #   Version: 20140205                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
         #--------------------- License: GPL-3  ---------------------#
-        # Copyright (C) 2009 - 2013  ppurka _at_ gmail _dot_ com    #
+        # Copyright (C) 2009 - 2014  ppurka _at_ gmail _dot_ com    #
         # This program comes with ABSOLUTELY NO WARRANTY;           #
         # This is free software, and you are welcome to redistribute#
         # it under certain conditions;                              #
@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 02/05/2014:   Change the color of time taken to normal.   #
         # 04/27/2013:   Bugfix: Location of make.conf has changed.  #
         #               Bugfix: NOCOLOR was working in reverse.     #
         # 04/13/2012:   Update to new message @ autounmask-write    #
@@ -359,7 +360,7 @@ help() {
     Version: $( sed -n -e '5s/^.*:[ ]\+\([0-9]\+\) .*$/\1/p' "$0" )
     "
     info "License: GPL-3
-    Copyright (C) 2009 - 2013  P. Purkayastha (ppurka _at_ gmail _dot_ com)
+    Copyright (C) 2009 - 2014  P. Purkayastha (ppurka _at_ gmail _dot_ com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
