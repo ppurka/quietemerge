@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 05/07/2014:   In errors the pkg name is now $P::reponame. #
         # 02/05/2014:   Change the color of time taken to normal.   #
         # 04/27/2013:   Bugfix: Location of make.conf has changed.  #
         #               Bugfix: NOCOLOR was working in reverse.     #
@@ -710,7 +711,7 @@ last_pkg_failed() {
     local p_tmp p="$1"
 
     # Check for "$p fail" message
-    LC_ALL="C" grep -qi "error.*$p fail"        $TMPFILE && return 0
+    LC_ALL="C" grep -qi "error.*${p}:.* fail"   $TMPFILE && return 0
     LC_ALL="C" grep -q  "Failed to .*$p"        $TMPFILE && return 0
     LC_ALL="C" grep -qi "ebuild not found.*$p"  $TMPFILE && return 0
 
