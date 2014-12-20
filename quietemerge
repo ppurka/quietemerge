@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20140205                                       #
+        #   Version: 20141220                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,8 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/20/2014:   Recent change in emerge output broke the    #
+        #               whole script! This is fixed.                #
         # 05/07/2014:   In errors the pkg name is now $P::reponame. #
         # 02/05/2014:   Change the color of time taken to normal.   #
         # 04/27/2013:   Bugfix: Location of make.conf has changed.  #
@@ -927,6 +929,7 @@ set_cols() {
 update_failed() {
     local p
     for p in $@; do
+        p="${p%::*}"
         infolr info "Install  $p." "${red}Error!$normal "
         ((exit_status++))
         pkg_installing="${pkg_installing/$p}"
@@ -945,6 +948,7 @@ update_installed() {
     #   if emerge is complete then remove package from pkg_* and tmpE,
     #   else if it is not in pkg_installing then add it
     for p in $@; do
+        p="${p%::*}"
         if echo "$elog_tail" | \
             LC_ALL="C" grep -qs ":::.* completed emerge .*${p}"; then
             infolr info "Install  $p." "$( merge_time "$p" )"
@@ -965,6 +969,7 @@ update_installed() {
 update_installing() {
     local p
     for p in $@; do
+        p="${p%::*}"
         pkg_merging="${pkg_merging/$p}"
         info "Installing $cyan$p$normal.$cl"
     done
@@ -976,6 +981,7 @@ update_merging() {
     local p
     local -i pnum total_len
     for p in $@; do
+        p="${p%::*}"
         # Add package to pkg_merging if not installing or installed
         if [[ "$pkg_merging" != *$p* && "$pkg_installing" != *$p* ]] \
             && grep -qs "$p" $tmpE; then
@@ -1018,6 +1024,7 @@ update_merging() {
 update_skipped() {
     local p
     for p in $@; do
+        p="${p%::*}"
         # Delete packages from tmpE so that count is correct.
         sed -i -e "/${p%%/*}\/${p##*/}/d" $tmpE
         ((exit_status[1]++))
