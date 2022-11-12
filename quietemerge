@@ -1328,7 +1328,7 @@ update_skipped      ${tmp}
 # Now check what is the status of the packages left in $tmpE
 # We don't need to bother with pkg_installing and pkg_merging anymore
 pkg_failed
-LC_ALL="C" grep -qiE "^\!\!\!.*(abort|error)" $TMPFILE && ((exit_status++))
+LC_ALL="C" grep -qiE "^!!!.*(abort|error)" $TMPFILE && ((exit_status++))
 
 if [[ $_total_num -gt 1 ]]; then
     centered_output blank " Total time taken: $( get_time ${merge_eta[0]} )"
