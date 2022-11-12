@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 11/12/2022:   Fix for grep-3.8 warnings                   #
         # 12/20/2014:   Recent change in emerge output broke the    #
         #               whole script! This is fixed.                #
         # 05/07/2014:   In errors the pkg name is now $P::reponame. #
