@@ -650,10 +650,11 @@ get_num_self() {
 # Output the time in hours, min, etc, given the number of seconds
 # Usage: get_time <# of seconds>
 get_time() {
+    [[ -z "$1" || "$1" -le 0 ]] && echo "0s" && return
+
     local -i days hours minutes seconds
     # date returns in 01 02, etc. We need to prepend the formats with
     # 10# so that read doesn't interpret 01, 02, etc as octals.
-    [[ "$1" -gt 0 ]] || return
     read days hours minutes seconds <<< \
         "$( date -u -d @${1} "+10#%j 10#%H 10#%M 10#%S" )"
     [[ "$days"    -gt 1 ]]  && echo -n "$(( ${days} - 1 ))d "
@@ -1164,8 +1165,9 @@ pkg_all="$( sed -r -e '/^\[(ebuild|binary)/!d' $tmpE )"
     determine_merge_eta
     centered_output blank " Total ETA: $( get_time ${merge_eta[0]} )"
     if LC_ALL="C" grep -m1 -qsE "^\[binary " $tmpE; then
-        infor "Estimating update time without ${pink}binary$normal emerges ..."
-        centered_output blank " Total ETA without ${pink}binary$normal: $(\
+        infor "Estimating update time without ${pink}binary${normal} emerges ..."
+        sleep 5
+        centered_output blank " Total ETA without ${pink}binary${normal}: $(\
             get_time $( determine_merge_eta_no_binary ) )"
     fi
     echo
