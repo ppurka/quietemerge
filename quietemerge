@@ -1166,7 +1166,6 @@ pkg_all="$( sed -r -e '/^\[(ebuild|binary)/!d' $tmpE )"
     centered_output blank " Total ETA: $( get_time ${merge_eta[0]} )"
     if LC_ALL="C" grep -m1 -qsE "^\[binary " $tmpE; then
         infor "Estimating update time without ${pink}binary${normal} emerges ..."
-        sleep 5
         centered_output blank " Total ETA without ${pink}binary${normal}: $(\
             get_time $( determine_merge_eta_no_binary ) )"
     fi
