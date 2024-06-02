@@ -280,10 +280,10 @@ centered_output() {
         fi
     fi
     if [[ "$1" = "dash" ]]; then
-        echo -e "${D_ASH:1:$begin}$reverse${2//\\x1[bB]\[0m/\x1b[0m$reverse}\
+        echo -e "${D_ASH:1:$begin}$reverse${2//\\x1[bB]\[0m/\\x1b[0m$reverse}\
 $normal${D_ASH:1:$end}"
     else
-        echo -e "${BLANK:1:$begin}$reverse${2//\\x1[bB]\[0m/\x1b[0m$reverse}\
+        echo -e "${BLANK:1:$begin}$reverse${2//\\x1[bB]\[0m/\\x1b[0m$reverse}\
 $normal${BLANK:1:$end}"
     fi
 }
