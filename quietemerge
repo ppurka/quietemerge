@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/18/2024:   Use median instead of mean in my_genlop     #
         # 06/02/2024:   Fix print for binary only emerge            #
         # 11/12/2022:   Fix for grep-3.8 warnings                   #
         # 12/20/2014:   Recent change in emerge output broke the    #
@@ -750,7 +751,8 @@ merge_time() {
 # look for packages with that specific version
 # Usage: my_genlop [-t] category/packagename[-ver]
 my_genlop() {
-    local -i cnt=0 line tmp=0 tmp_sum=0 t=0
+    local -i cnt=0 line tmp=0 t=0
+    local -i -a medianArray=()
     local c p status
     if [[ "$1" = "-t" ]]; then
         t=1
@@ -762,17 +764,17 @@ my_genlop() {
     fi
     while read line status; do
         # Skip instances of duplicate lines. An example is sys-apps/portage
-        if [[ "$status" = "completed" && $tmp -ne 0 ]]; then
+        if [[ "$status" == "completed" && $tmp -ne 0 ]]; then
             # There are two or more consecutive lines of "completed emerge"
             continue
-        elif [[ "$status" = "emerged" && $tmp -eq 0 ]]; then
+        elif [[ "$status" == "emerged" && $tmp -eq 0 ]]; then
             # There are two or more consecutive lines of "emerge $pkg"
             continue
         fi
         if [[ "$tmp" -eq 0 ]]; then
             tmp="$line"
         else
-            tmp_sum=$(( $tmp_sum + $tmp - $line ))
+            medianArray+=( $(( $tmp - $line )) )
             ((cnt++))
             tmp=0
             # Use this until I have a better sed expression which can quit
@@ -788,7 +790,12 @@ my_genlop() {
                 "/:::.* completed emerge .*${c}\/${p}-[0-9]\+/,/>>>.* emerge .*${c}\/${p}-[0-9]\+/{s@^\([0-9]\+\):[ ]\+:::.* completed emerge .*${c}/${p}.*@\1 completed@p;s@^\([0-9]\+\):[ ]\+>>>.* emerge .*${c}/${p}.*@\1 emerged@p}" \
                 "$tmpT"
         fi )
-    [[ "$cnt" -gt 0 ]] && echo "$(( $tmp_sum / $cnt ))"
+    if [[ "$cnt" -gt 0 ]]; then
+        medianArray=( $( echo ${medianArray[@]} | tr ' ' '\n' | sort -n ) )
+        # In the case of even number of entries, we take the higher mid-point
+        # (indexed from 0) instead of taking the average of the middle two
+        echo "${medianArray[$((${#medianArray[@]} / 2))]}"
+    fi
 }
 
 # Function to give the ETA for the emerge of current package or emerge
