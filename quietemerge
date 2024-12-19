@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 12/19/2024:   Return 1 if cnt is 0                        #
         # 12/18/2024:   Use median instead of mean in my_genlop     #
         # 06/02/2024:   Fix print for binary only emerge            #
         # 11/12/2022:   Fix for grep-3.8 warnings                   #
