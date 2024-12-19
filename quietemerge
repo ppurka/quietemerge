@@ -795,6 +795,8 @@ my_genlop() {
         # In the case of even number of entries, we take the higher mid-point
         # (indexed from 0) instead of taking the average of the middle two
         echo "${medianArray[$((${#medianArray[@]} / 2))]}"
+    else
+        return 1
     fi
 }
 
