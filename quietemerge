@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 03/08/2025:   Fix parsing of package name for binary      #
         # 12/19/2024:   Return 1 if cnt is 0                        #
         # 12/18/2024:   Use median instead of mean in my_genlop     #
         # 06/02/2024:   Fix print for binary only emerge            #
@@ -546,9 +547,13 @@ determine_merge_eta() {
     while read p; do
         [[ "$p" =~ ^\[ebuild.* ]] || [[ "$p" =~ ^\[binary.* ]] || continue
         p="${p#*]}"
-        # Change cat/pkg-ver to cat/pkg
-        ptime="$( echo "$p" | \
-            sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*$/\1/' )"
+        # Change cat/pkg-ver to cat/pkg. For binary packages pull from
+        # gentoo repos, they may contain extra version extension
+        [[ "$p" =~ ^\[ebuild.* ]]                                   &&
+            ptime="$( echo "$p" | \
+                sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*$/\1/' )"   ||
+            ptime="$( echo "$p" | \
+                sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*-[0-9]\{1,\}[ :].*$/\1/' )"
         ptime="$( my_genlop $ptime )" || ptime=0
         merge_eta[${cnt}]=$ptime
         merge_eta[0]=$(( ${merge_eta[0]} + $ptime ))
