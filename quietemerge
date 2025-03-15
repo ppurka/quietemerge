@@ -2,7 +2,7 @@
 
         #-----------------------------------------------------------#
         #   This program is used to make emerge output pretty       #
-        #   Version: 20250308                                       #
+        #   Version: 20250315                                       #
         #                                           -ppurka         #
         #-----------------------------------------------------------#
 
@@ -22,6 +22,7 @@
 
         #---------------------  Changelog  -------------------------#
         #                                                           #
+        # 03/15/2025:   Fix parsing of package name for ETA estimate#
         # 03/08/2025:   Fix parsing of package name for binary      #
         # 12/19/2024:   Return 1 if cnt is 0                        #
         # 12/18/2024:   Use median instead of mean in my_genlop     #
@@ -543,22 +544,22 @@ unmount_tmpfs() {
 determine_merge_eta() {
     # This else loop runs only during the "Pretended emerge" stage
     local -i cnt=1
-    local p ptime
+    local p pp ptime
     while read p; do
         [[ "$p" =~ ^\[ebuild.* ]] || [[ "$p" =~ ^\[binary.* ]] || continue
-        p="${p#*]}"
+        pp="${p#*]}"
         # Change cat/pkg-ver to cat/pkg. For binary packages pull from
         # gentoo repos, they may contain extra version extension
         [[ "$p" =~ ^\[ebuild.* ]]                                   &&
-            ptime="$( echo "$p" | \
+            ptime="$( echo "$pp" | \
                 sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*$/\1/' )"   ||
-            ptime="$( echo "$p" | \
+            ptime="$( echo "$pp" | \
                 sed -e 's/^[ ]\+\([^ ]\+\)-[0-9]\{1,\}.*-[0-9]\{1,\}[ :].*$/\1/' )"
         ptime="$( my_genlop $ptime )" || ptime=0
         merge_eta[${cnt}]=$ptime
         merge_eta[0]=$(( ${merge_eta[0]} + $ptime ))
         if [[ $_ETA_ALL -eq 1 ]]; then
-            p="$( echo "$p" | sed -e 's/^[ ]\+\([^ ]\+\).*$/\1/' )"
+            p="$( echo "$pp" | sed -e 's/^[ ]\+\([^ ]\+\).*$/\1/' )"
             infolr "echo -e" "    $bold$p$normal: " "$( get_time $ptime )"
         fi
         ((cnt++))
